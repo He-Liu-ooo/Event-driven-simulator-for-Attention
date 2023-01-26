@@ -13,7 +13,7 @@ class SRAM(BaseUnit):
 
     sram_state_matrix: record states of data in the SRAM
                         three states: READY/REMOVE/REMOVING
-    complete: whether the calculation 
+    complete: True if the last data is read for calculation, same for SRAM1/2, SRAM1.complete is always False, ignore it
     """
     def __init__(self, latency_count, num, height, width):
         super(SRAM, self).__init__(latency_count)
@@ -34,7 +34,10 @@ class SRAM(BaseUnit):
     
     def dump_state_matrix(self, sram):
         print(str(sram) + ":")
-        print(self.sram_state_matrix[28:31][:15])
+        if sram == "SRAM1":
+            print(self.sram_state_matrix)
+        else:
+            print(self.sram_state_matrix[30:])
     
     def update_to_ready(self, row, col):
         self.sram_state_matrix[row][col] = utils.READY
@@ -68,6 +71,10 @@ class SRAM1(SRAM):
     def dump_cal_status(self):
         print("SRAM1: [" + str(self.blocknum_row_sram_idx_cal) + ", " + str(self.subsum_cnt_idx_cal) + "]")
 
+    # def dump_state_matrix(self):
+    #     print("SRAM1:")
+    #     print(self.sram_state_matrix)
+
     def add_mapping(self, blocknum_row, blocknum_col, subsum_cnt, blocknum_row_sram):
         """ 
         Formulate mapping strategy
@@ -86,6 +93,7 @@ class SRAM1(SRAM):
 
         # initialized all to READY
         self.sram_state_matrix = np.zeros((self.blocknum_row_sram_std, self.subsum_cnt_std), dtype=int)
+        print("SRAM1 state matrix size: [" + str(self.sram_state_matrix.shape[0]) + ", " + str(self.sram_state_matrix.shape[1]) + "]")
 
     def ready(self):
         return (self.sram_state_matrix[self.blocknum_row_sram_idx_cal][self.subsum_cnt_idx_cal] == utils.READY)
@@ -150,7 +158,9 @@ class SRAM2(SRAM):
                 "/" + str(self.block_col_idx_cal) + "]") 
     
     # def dump_state_matrix(self):
-    #     print(self.sram_state_matrix)
+    #     print("SRAM2:")
+    #     # print(self.sram_state_matrix[28:][48:])
+    #     print(self.sram_state_matrix[28:])
 
     def add_mapping(self, blocknum_row, blocknum_col, block_col, subsum_cnt):
         """ 
@@ -173,6 +183,7 @@ class SRAM2(SRAM):
 
         # initialized all to READY
         self.sram_state_matrix = np.zeros((self.subsum_cnt_std, self.block_col_std * self.blocknum_col_std), dtype=int)
+        print("SRAM2 state matrix size: [" + str(self.sram_state_matrix.shape[0]) + ", " + str(self.sram_state_matrix.shape[1]) + "]")
 
     def ready(self, blocknum_col_cal):
         return (self.sram_state_matrix[self.subsum_cnt_idx_cal][blocknum_col_cal * self.block_col_std + self.block_col_idx_cal] == utils.READY)
@@ -217,7 +228,8 @@ class SRAM2(SRAM):
                 self.subsum_cnt_idx_cal = 0
                 is_sram1_advance = True
             else:
-                # self.update_to_remove(blocknum_cal[1], self.block_col_idx_cal + 1)
+                # update the data of last column and last row to REMOVE
+                self.update_to_remove(blocknum_cal[1], self.block_col_idx_cal)
                 self.complete = True
                 is_sram1_advance = True
 

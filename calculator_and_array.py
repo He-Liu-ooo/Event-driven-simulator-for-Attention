@@ -10,7 +10,7 @@ class CalculatorAndArray(BaseUnit):
     mac_lane: number of MAC lanes
     mac_num: number of MAC within a MAC lane
 
-    calculation_complete: if all the calculation and write into array of a matrix is complete
+    complete: if all the calculation and write into array of a matrix is complete(True when the last data becomes complete sum in array)
     array_state_matrix: indicating data status of array
 
     array_idx_cal: array position that is going to hold the result calculated data 
@@ -27,7 +27,7 @@ class CalculatorAndArray(BaseUnit):
         self.mac_lane = mac_lane
         self.mac_num = mac_num
 
-        self.calculation_complete = False
+        self.complete = False
         self.array_state_matrix = np.zeros(mac_lane, dtype=int)
 
         self.array_idx_cal = 0
@@ -84,7 +84,7 @@ class CalculatorAndArray(BaseUnit):
             self.array_idx_cal = 0
 
             if self.block_counter == self.block_cnt:
-                self.calculation_complete = True
+                self.complete = True
 
     def add_mapping(self, subsum_cnt):
         """
@@ -102,4 +102,14 @@ class CalculatorAndArray(BaseUnit):
             return (self.array_state_matrix[self.array_idx_cal] == utils.NULL)
         else: 
             return (self.array_state_matrix[self.array_idx_cal] == utils.SUBSUM)
+
+    def reset(self):
+        """ 
+        Reset all variables except array_state_matrix
+        """
+        self.complete = False
+        self.array_idx_cal = 0
+        self.subsum_counter = 0
+        self.block_counter = 0
+
         

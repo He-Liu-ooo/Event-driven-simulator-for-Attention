@@ -10,16 +10,17 @@ class GlobalBuffer(BaseUnit):
     sram1_busy: if the GB is transferring data from core sram1 now
     array_busy: if the GB is transferring data from core array now
     row, col: which data in core's sram is the global buffer transfer now
-    colnum: record which mac_lane * mac_lane col of sram2 is now transferring
+    colnum2: record which mac_lane * mac_lane col of sram2 is now transferring
+    rownum1: record which time of the  whole sram1 is now transferring(in seq-len=384 case, sram1 will be updated 384/mac_lane/(sram1_height/(embedding_dim/mac_num))-1=5 times)
     array_idx_rm: which data in core's array is the global buffer transfer now
                difference between array_idx_cal in calculator_and_array, which indicates position id that needs to accept the next data
 
     blocknum_row_cnt: number of mac_lane rows need to be replaced
     array_data_cnt: number of mac_lane data need to be replaced
 
-    sram1_complete: indicates whether data update of SRAM1 is complete
-    sram2_complete: indicates whether data update of SRAM2 is complete
-    array_complete: indicates whether the calculated data is all transferred into gb
+    sram1_complete: indicates whether data update of SRAM1 is complete(True when the last data starts transferring)
+    sram2_complete: indicates whether data update of SRAM2 is complete(True when the last data starts transferring)
+    array_complete1: indicates whether the calculated data is all transferred into gb(True when the last data starts transferring)
 
     array_latency_counter: latency counter for the data transfer of array
     array_data_counter: record how many data has been moved into gb
@@ -39,7 +40,8 @@ class GlobalBuffer(BaseUnit):
 
         self.row = [0, 0]
         self.col = [0, 0]
-        self.colnum = 1
+        self.colnum2 = 1
+        self.rownum1 = 1
         self.array_idx_rm = 0
 
         self.blocknum_row_cnt = 0
@@ -90,23 +92,24 @@ class GlobalBuffer(BaseUnit):
         elif (self.row[0] + 1) < num_row:
             self.row[0] += 1
             self.col[0] = 0
-        elif (self.row[0] + 1) < self.blocknum_row_cnt:
+        elif (self.row[0] + (self.rownum1 - 1) * num_row + 1) < self.blocknum_row_cnt:
             self.row[0] = 0
             self.col[0] = 0
+            self.rownum1 += 1
         else:
             self.sram1_complete = True
 
     def rowcol_advance2(self, mac_lane, num_row, num_col):
         """ For SRAM2 """
-        if (self.col[1] + 1 - self.colnum * mac_lane) < 0:
+        if (self.col[1] + 1 - self.colnum2 * mac_lane) < 0:
             self.col[1] += 1
         elif (self.row[1] + 1) < num_row:
             self.row[1] += 1
-            self.col[1] = (self.colnum - 1) * mac_lane
+            self.col[1] = (self.colnum2 - 1) * mac_lane
         elif (self.col[1] + 1) < num_col:
             self.col[1] += 1
             self.row[1] = 0
-            self.colnum += 1
+            self.colnum2 += 1
         else: 
             self.sram2_complete = True
     
@@ -158,7 +161,7 @@ class GlobalBuffer(BaseUnit):
 
         return idx
 
-    def is_sram2_update_done(self, sram_state_matrix):
-        if (self.row[1] == (sram_state_matrix.shape[0] - 1)) & (self.col[1] == (sram_state_matrix.shape[1] - 1)):
-            self.sram2_complete = True
+    # def is_sram2_update_done(self, sram_state_matrix):
+    #     if (self.row[1] == (sram_state_matrix.shape[0] - 1)) & (self.col[1] == (sram_state_matrix.shape[1] - 1)):
+    #         self.sram2_complete = True
 
