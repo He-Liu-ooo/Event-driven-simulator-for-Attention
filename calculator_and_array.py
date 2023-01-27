@@ -43,7 +43,7 @@ class CalculatorAndArray(BaseUnit):
         print("| + operating latency: " + str(self.latency_count * utils.METATIME) + "ns")
 
     def dump_cal_status(self):
-        print("array: [" + str(self.array_idx_cal)  + "(id), " + str(self.subsum_counter) + "(subsum_cnt/" + str(self.subsum_cnt - 1) + ")]")
+        print("array: [" + str(self.array_idx_cal)  + "(id), " + str(self.subsum_counter) + "(subsum_cnt/" + str(self.subsum_cnt - 1) + ")], block number: " + str(self.block_counter))
 
     def dump_state_matrix(self):
         print(self.array_state_matrix)
@@ -111,5 +111,6 @@ class CalculatorAndArray(BaseUnit):
         self.array_idx_cal = 0
         self.subsum_counter = 0
         self.block_counter = 0
+        super().reset()
 
         

@@ -18,9 +18,12 @@ class GlobalBuffer(BaseUnit):
     blocknum_row_cnt: number of mac_lane rows need to be replaced
     array_data_cnt: number of mac_lane data need to be replaced
 
-    sram1_complete: indicates whether data update of SRAM1 is complete(True when the last data starts transferring)
-    sram2_complete: indicates whether data update of SRAM2 is complete(True when the last data starts transferring)
+    sram1_complete1: indicates whether data update of SRAM1 is complete(True when the last data starts transferring)
+    sram1_complete2: indicates whether data update of SRAM1 is complete(True when the last data finishes transferring)
+    sram2_complete1: indicates whether data update of SRAM2 is complete(True when the last data starts transferring)
+    sram1_complete2: indicates whether data update of SRAM1 is complete(True when the last data finishes transferring)
     array_complete1: indicates whether the calculated data is all transferred into gb(True when the last data starts transferring)
+    array_complete2: indicates whether the calculated data is all transferred into gb(True when the last data finishes transferring)
 
     array_latency_counter: latency counter for the data transfer of array
     array_data_counter: record how many data has been moved into gb
@@ -46,9 +49,12 @@ class GlobalBuffer(BaseUnit):
 
         self.blocknum_row_cnt = 0
         self.array_data_cnt = 0
-        self.sram1_complete = False
-        self.sram2_complete = False
-        self.array_complete = False
+        self.sram1_complete1 = False
+        self.sram1_complete2 = False
+        self.sram2_complete1 = False
+        self.sram2_complete2 = False
+        self.array_complete1 = False
+        self.array_complete2 = False
 
         self.array_latency_counter = 0
         self.array_data_counter = 0
@@ -97,7 +103,7 @@ class GlobalBuffer(BaseUnit):
             self.col[0] = 0
             self.rownum1 += 1
         else:
-            self.sram1_complete = True
+            self.sram1_complete1 = True
 
     def rowcol_advance2(self, mac_lane, num_row, num_col):
         """ For SRAM2 """
@@ -111,7 +117,7 @@ class GlobalBuffer(BaseUnit):
             self.row[1] = 0
             self.colnum2 += 1
         else: 
-            self.sram2_complete = True
+            self.sram2_complete1 = True
     
     def array_idx_advance(self, num_data):
         if self.array_idx_rm + 1 < num_data:
@@ -120,7 +126,7 @@ class GlobalBuffer(BaseUnit):
             self.array_idx_rm = 0
             self.array_data_counter += 1
             if self.array_data_counter == self.array_data_cnt:
-                self.array_complete = True
+                self.array_complete1 = True
 
     def find_sram_target(self, sram_state_matrix, mac_lane, sram):
         """ Find the target data in sram1 that will be transferred """
@@ -160,8 +166,3 @@ class GlobalBuffer(BaseUnit):
             self.array_idx_advance(array_state_matrix.shape[0])
 
         return idx
-
-    # def is_sram2_update_done(self, sram_state_matrix):
-    #     if (self.row[1] == (sram_state_matrix.shape[0] - 1)) & (self.col[1] == (sram_state_matrix.shape[1] - 1)):
-    #         self.sram2_complete = True
-

@@ -7,8 +7,6 @@ This is an event-driven hardware simulator for simulating the latency of Attenti
     BaseUnit ---- SRAM ---- SRAM1
              |         |--- SRAM2
              |
-             |--- Core
-             |
              |--- GlobalBuffer
              |
              |--- CalculatorAndArray

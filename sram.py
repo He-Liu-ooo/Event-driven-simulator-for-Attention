@@ -25,7 +25,6 @@ class SRAM(BaseUnit):
         self.sram_state_matrix = np.zeros((height, width), dtype=int)
         self.complete = False
 
-
     def dump_configs(self):
         print("| + sub-SRAM number: " + str(self.num))
         print("| + sub-SRAM height: " + str(self.height))
@@ -64,16 +63,12 @@ class SRAM1(SRAM):
         self.blocknum_row_sram_idx_cal = 0
         self.subsum_cnt_idx_cal = 0
 
-        self.blocknum_row_sram_idx_rm = 0
-        self.subsum_cnt_idx_rm = 0
+        # self.blocknum_row_sram_idx_rm = 0
+        # self.subsum_cnt_idx_rm = 0
 
 
     def dump_cal_status(self):
         print("SRAM1: [" + str(self.blocknum_row_sram_idx_cal) + ", " + str(self.subsum_cnt_idx_cal) + "]")
-
-    # def dump_state_matrix(self):
-    #     print("SRAM1:")
-    #     print(self.sram_state_matrix)
 
     def add_mapping(self, blocknum_row, blocknum_col, subsum_cnt, blocknum_row_sram):
         """ 
@@ -129,6 +124,11 @@ class SRAM1(SRAM):
         # sram2 completes, flush the last line in sram1
             self.update_to_remove(self.blocknum_row_sram_idx_cal)
 
+    def reset(self):
+        self.complete = False
+        self.blocknum_row_sram_idx_cal = 0
+        self.subsum_cnt_idx_cal = 0
+        super().reset()
 
 
 class SRAM2(SRAM):
@@ -149,18 +149,13 @@ class SRAM2(SRAM):
         self.block_col_idx_cal = 0
         self.subsum_cnt_idx_cal = 0
 
-        self.block_col_idx_rm = 0
-        self.subsum_cnt_idx_rm = 0
-        self.blocknum_col_idx_rm = 0
+        # self.block_col_idx_rm = 0
+        # self.subsum_cnt_idx_rm = 0
+        # self.blocknum_col_idx_rm = 0
      
     def dump_cal_status(self, blocknum_col_cal):
         print("SRAM2: [" + str(self.subsum_cnt_idx_cal) + ", " + str(blocknum_col_cal * self.block_col_std + self.block_col_idx_cal) + \
                 "/" + str(self.block_col_idx_cal) + "]") 
-    
-    # def dump_state_matrix(self):
-    #     print("SRAM2:")
-    #     # print(self.sram_state_matrix[28:][48:])
-    #     print(self.sram_state_matrix[28:])
 
     def add_mapping(self, blocknum_row, blocknum_col, block_col, subsum_cnt):
         """ 
@@ -190,9 +185,6 @@ class SRAM2(SRAM):
 
     def update_to_remove(self, blocknum_col, block_col_idx_cal):
         self.sram_state_matrix[self.subsum_cnt_idx_cal][blocknum_col * self.block_col_std + block_col_idx_cal] = utils.REMOVE
-    
-    # def update_to_ready(self, row, col):
-    #     self.sram_state_matrix[row][col] = utils.READY
 
     def cal_advance(self, blocknum_cal):
         is_sram1_advance = False
@@ -233,8 +225,10 @@ class SRAM2(SRAM):
                 self.complete = True
                 is_sram1_advance = True
 
-        # if self.complete:
-        #     pass
-            # self.update_to_remove()
-
         return is_sram1_advance
+
+    def reset(self):
+        self.complete = False
+        self.block_col_idx_cal = 0
+        self.subsum_cnt_idx_cal = 0
+        super().reset()

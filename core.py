@@ -21,7 +21,6 @@ class Core:
         self.calculator_and_array = CalculatorAndArray(mac_lane, mac_num, block_cnt, array_and_calculator_latency_count)
 
         self.blocknum_cal = [0, 0]
-        self.complete = False
 
     def dump_configs(self):
         print("----------------------------------------------")
@@ -66,9 +65,11 @@ class Core:
             self.sram1.cal_advance(self.blocknum_cal, self.sram2.complete)
 
     def is_complete(self):
-        # the 2 SRAMs must complete at the same time
-        # print("sram1 complete: " + str(self.sram1.complete))
-        # print("sram2 complete: " + str(self.sram2.complete))
-        # assert(self.sram1.complete == self.sram2.complete)
-
         return (self.sram1.complete | self.sram2.complete)
+
+    def reset(self):
+        self.sram1.reset()
+        self.sram2.reset()
+        self.calculator_and_array.reset()
+        self.blocknum_cal = [0, 0]
+    
