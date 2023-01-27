@@ -69,9 +69,9 @@ class GlobalBuffer(BaseUnit):
         print("| + access latency: " + str(self.latency_count * utils.METATIME) + "ns")
         print("----------------------------------------------")
 
-    def dump_rm_status(self):
+    def dump_rm_status(self, idx):
         print("---------------------------")
-        print(" Global buffer status:")
+        print(" Global buffer " + str(idx) + " status:")
         print(" + is busy for sram1: " + str(self.sram1_busy))
         print(" + is busy for array: " + str(self.array_busy))
         print(" + Next transferring data from sram1: [" + str(self.row[0]) + ", " + str(self.col[0]) + "]")
@@ -79,40 +79,64 @@ class GlobalBuffer(BaseUnit):
         print(" + Next transferring data from array: " + str(self.array_idx_rm))
         print("---------------------------")
 
-    def add_mapping(self, blocknum_row_cnt, array_data_cnt):
+    def dump_mappings(self, idx):
+        print("----------------------------------------------")
+        print("| Global buffer " + str(idx) + " Mappings")
+        print("| + number of mac_lane rows in result matrix: " + str(self.blocknum_row_cnt))
+        print("| + number of mac_lane*mac_lane blocks in result matrix: " + str(self.array_data_cnt))
+        print("| + logic SRAM1 state matrix: [" + str(self.blocknum_row_cnt) + "/" + str(self.sram1_rownum_cnt) + ", " + str(self.sram_subsum_cnt) + "]")
+        print("| + logic SRAM2 state matrix: [" + str(self.sram_subsum_cnt) + ", " + str(self.sram2_colnum_cnt) + "]")
+        print("----------------------------------------------")
+
+    def add_mapping(self, blocknum_row_cnt, array_data_cnt, sram_subsum_cnt, sram1_rownum_cnt, sram2_colnum_cnt):
         """  
         # TODO not implemented yet
         num_working_std: maximum number of data can be transferred at the same time, which is equal to mac_lane, 
                          with the purpose of match the bandwidth of SRAM1
                          # NOTE this could be modified if the bandwidth of GB is far different from general standards 
+       
+        blocknum_row_cnt: number of mac_lane rows in result matrix
+        sram_subsum_cnt: number of subsums acculmulated to complete the calculation of a  mac_lane * mac_lane block
+                         1024/32=32 for Q/K/V calculation, 64/32=2 for Q*K calculation, 384/32=12 for A'*V calculation, under seq-len = 384
+                         column number for sram1 logic state matrix and row number for sram2 logic state matrix
+        sram1_rownum_cnt: number of mac_lane rows in a sub-SRAM
+                          128/32=4 for Q/K/V calculation, 128/2=64 for Q*K calculation, 128/12=10 for A'*V calculation, under seq-len = 384  
+                          row number for sram1 logic state matrix
+        sram2_colnum_cnt: number of rows of valid data in sram2
+                          64 for Q/K/V calculation, 384 for Q*K calculation, 64 for A'*V calculation, under seq-len = 384
+                          column number for sram2 logic state matrix
         """
 
         self.blocknum_row_cnt = blocknum_row_cnt
         self.array_data_cnt = array_data_cnt
+        self.sram_subsum_cnt = sram_subsum_cnt
+        self.sram1_rownum_cnt = sram1_rownum_cnt
+        self.sram2_colnum_cnt = sram2_colnum_cnt
+
         # self.num_working_std = num_working
 
-    def rowcol_advance1(self, num_row, num_col):
+    def rowcol_advance1(self):
         """ For SRAM1 """
-        if (self.col[0] + 1) < num_col:
+        if (self.col[0] + 1) < self.sram_subsum_cnt:
             self.col[0] += 1
-        elif (self.row[0] + 1) < num_row:
+        elif ((self.row[0] + 1) < self.sram1_rownum_cnt) and ((self.row[0] + 1) < self.blocknum_row_cnt):
             self.row[0] += 1
             self.col[0] = 0
-        elif (self.row[0] + (self.rownum1 - 1) * num_row + 1) < self.blocknum_row_cnt:
+        elif (self.row[0] + (self.rownum1 - 1) * self.sram1_rownum_cnt + 1) < self.blocknum_row_cnt:
             self.row[0] = 0
             self.col[0] = 0
             self.rownum1 += 1
         else:
             self.sram1_complete1 = True
 
-    def rowcol_advance2(self, mac_lane, num_row, num_col):
+    def rowcol_advance2(self, mac_lane):
         """ For SRAM2 """
         if (self.col[1] + 1 - self.colnum2 * mac_lane) < 0:
             self.col[1] += 1
-        elif (self.row[1] + 1) < num_row:
+        elif (self.row[1] + 1) < self.sram_subsum_cnt:
             self.row[1] += 1
             self.col[1] = (self.colnum2 - 1) * mac_lane
-        elif (self.col[1] + 1) < num_col:
+        elif (self.col[1] + 1) < self.sram2_colnum_cnt:
             self.col[1] += 1
             self.row[1] = 0
             self.colnum2 += 1
@@ -133,28 +157,31 @@ class GlobalBuffer(BaseUnit):
 
         row = 0
         col = 0
+        idx = 0
         if sram == 1:
             # if for sram1 
-            if sram_state_matrix[self.row[0]][self.col[0]] == utils.REMOVE:
+            if sram_state_matrix[self.row[0] * self.sram_subsum_cnt + self.col[0]] == utils.REMOVE:
                 # hit = True
                 row = self.row[0]
                 col = self.col[0]
                 self.sram1_busy = True
-                self.rowcol_advance1(sram_state_matrix.shape[0], sram_state_matrix.shape[1])
+                self.rowcol_advance1()
+            idx = row * self.sram_subsum_cnt + col
         elif sram == 2:
             # if for sram2 
-            if sram_state_matrix[self.row[1]][self.col[1]] == utils.REMOVE:
+            if sram_state_matrix[self.row[1] * self.sram2_colnum_cnt + self.col[1]] == utils.REMOVE:
                 # hit = True
                 # self.num_working += 1
                 row = self.row[1]
                 col = self.col[1]
                 # if self.num_working == self.num_working_std:
                 self.sram2_busy = True
-                self.rowcol_advance2(mac_lane, sram_state_matrix.shape[0], sram_state_matrix.shape[1])
+                self.rowcol_advance2(mac_lane)
+            idx = row * self.sram2_colnum_cnt + col
         else:
             assert(0)
 
-        return (row, col)
+        return idx
 
     def find_array_target(self, array_state_matrix):
         """ Find the target data in array that will be transferred """

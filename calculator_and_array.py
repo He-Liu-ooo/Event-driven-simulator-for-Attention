@@ -48,6 +48,9 @@ class CalculatorAndArray(BaseUnit):
     def dump_state_matrix(self):
         print(self.array_state_matrix)
 
+    def dump_mappings(self):
+        print("| + number of subsums acculmulated for a complete mac_lane*mac_lane block: " + str(self.subsum_cnt))
+
     def update_to_removing(self, array_idx):
         self.array_state_matrix[array_idx] = utils.REMOVING
 
@@ -112,5 +115,8 @@ class CalculatorAndArray(BaseUnit):
         self.subsum_counter = 0
         self.block_counter = 0
         super().reset()
+
+    def reconfigure(self, block_cnt):
+        self.block_cnt = block_cnt
 
         

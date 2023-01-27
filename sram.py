@@ -25,6 +25,9 @@ class SRAM(BaseUnit):
         self.sram_state_matrix = np.zeros((height, width), dtype=int)
         self.complete = False
 
+        self.sram_state_matrix = np.ones(self.height, dtype=int)
+        print("SRAM2 state matrix size: " + str(self.height))
+
     def dump_configs(self):
         print("| + sub-SRAM number: " + str(self.num))
         print("| + sub-SRAM height: " + str(self.height))
@@ -34,16 +37,25 @@ class SRAM(BaseUnit):
     def dump_state_matrix(self, sram):
         print(str(sram) + ":")
         if sram == "SRAM1":
-            print(self.sram_state_matrix)
+            print(self.sram_state_matrix[:32])
+            print(self.sram_state_matrix[32:64])
+            print(self.sram_state_matrix[64:96])
+            print(self.sram_state_matrix[96:])
         else:
-            print(self.sram_state_matrix[30:])
-    
-    def update_to_ready(self, row, col):
-        self.sram_state_matrix[row][col] = utils.READY
+            print("0")
+            print(self.sram_state_matrix[:64])
+            print("1")
+            print(self.sram_state_matrix[64:128])
+            print("30")
+            print(self.sram_state_matrix[1920:1984])
+            print("31")
+            print(self.sram_state_matrix[1984:])
 
-    def update_to_removing(self, row, col):
-        # print("[row, col]: " + "[" + str(row) + ", " + str(col) + "]")
-        self.sram_state_matrix[row][col] = utils.REMOVING
+    def update_to_ready(self, idx):
+        self.sram_state_matrix[idx] = utils.READY
+
+    def update_to_removing(self, idx):
+        self.sram_state_matrix[idx] = utils.REMOVING
 
 class SRAM1(SRAM):
     """
@@ -66,36 +78,38 @@ class SRAM1(SRAM):
         # self.blocknum_row_sram_idx_rm = 0
         # self.subsum_cnt_idx_rm = 0
 
-
     def dump_cal_status(self):
         print("SRAM1: [" + str(self.blocknum_row_sram_idx_cal) + ", " + str(self.subsum_cnt_idx_cal) + "]")
+    
+    def dump_mappings(self):
+        print("| + number of mac_lane rows in the result matrix: " + str(self.blocknum_row_std))
+        print("| + number of mac_lane columns in the result matrix: " + str(self.blocknum_col_std))
+        print("| + logic state matrix size: [" + str(self.blocknum_row_std) + "/" + str(self.blocknum_row_sram_std) + ", " + str(self.subsum_cnt_std) + "]")
 
     def add_mapping(self, blocknum_row, blocknum_col, subsum_cnt, blocknum_row_sram):
         """ 
         Formulate mapping strategy
 
-        blocknum_row_std: number of mac_lane * mac_lane blocks in the rowumn of result matrix
         blocknum_row_std: number of mac_lane * mac_lane blocks in the row of result matrix
+        blocknum_col_std: number of mac_lane * mac_lane blocks in the column of result matrix
         subsum_cnt_std: number of subsums accumulated to complete the calculation of a mac_lane * mac_lane block
         blocknum_row_sram_std: number of rows of mac_lane * mac_lane blocks simultaneously stores in sub-SRAM
+
+        flag: determine whether the state matrix should be initialized or kept
 
         """
 
         self.blocknum_row_std = blocknum_row
         self.blocknum_col_std = blocknum_col
-        self.subsum_cnt_std = subsum_cnt
-        self.blocknum_row_sram_std = blocknum_row_sram
-
-        # initialized all to READY
-        self.sram_state_matrix = np.zeros((self.blocknum_row_sram_std, self.subsum_cnt_std), dtype=int)
-        print("SRAM1 state matrix size: [" + str(self.sram_state_matrix.shape[0]) + ", " + str(self.sram_state_matrix.shape[1]) + "]")
+        self.subsum_cnt_std = subsum_cnt #32
+        self.blocknum_row_sram_std = blocknum_row_sram #4
 
     def ready(self):
-        return (self.sram_state_matrix[self.blocknum_row_sram_idx_cal][self.subsum_cnt_idx_cal] == utils.READY)
+        return (self.sram_state_matrix[self.blocknum_row_sram_idx_cal * self.subsum_cnt_std + self.subsum_cnt_idx_cal] == utils.READY)
 
     def update_to_remove(self, blocknum_row_sram_idx_cal):
         for i in range(self.subsum_cnt_std):
-            self.sram_state_matrix[blocknum_row_sram_idx_cal][i] = utils.REMOVE
+            self.sram_state_matrix[blocknum_row_sram_idx_cal * self.subsum_cnt_std + i] = utils.REMOVE
     
                                         # in order to get the last line of sram1 data to be replaced
     def cal_advance(self, blocknum_cal, sram2_complete):
@@ -156,6 +170,11 @@ class SRAM2(SRAM):
     def dump_cal_status(self, blocknum_col_cal):
         print("SRAM2: [" + str(self.subsum_cnt_idx_cal) + ", " + str(blocknum_col_cal * self.block_col_std + self.block_col_idx_cal) + \
                 "/" + str(self.block_col_idx_cal) + "]") 
+    
+    def dump_mappings(self):
+        print("| + number of mac_lane rows in the result matrix: " + str(self.blocknum_row_std))
+        print("| + number of mac_lane columns in the result matrix: " + str(self.blocknum_col_std))
+        print("| + logic state matrix size: [" + str(self.subsum_cnt_std) + ", " + str(self.logic_sram_col_cnt_std) + "]")
 
     def add_mapping(self, blocknum_row, blocknum_col, block_col, subsum_cnt):
         """ 
@@ -168,23 +187,22 @@ class SRAM2(SRAM):
 
         sram_state_matrix: record states of data in the SRAM
                            three states: READY/REMOVE/REMOVING
+
+        flag: determine whether the state matrix should be initialized or kept
         """
 
         self.block_col_std = block_col
         self.blocknum_col_std = blocknum_col
         self.blocknum_row_std = blocknum_row
-        self.subsum_cnt_std = subsum_cnt
-        self.num_working_std = block_col
+        self.subsum_cnt_std = subsum_cnt  #32
+        self.logic_sram_col_cnt_std = block_col * blocknum_col #64
 
-        # initialized all to READY
-        self.sram_state_matrix = np.zeros((self.subsum_cnt_std, self.block_col_std * self.blocknum_col_std), dtype=int)
-        print("SRAM2 state matrix size: [" + str(self.sram_state_matrix.shape[0]) + ", " + str(self.sram_state_matrix.shape[1]) + "]")
 
     def ready(self, blocknum_col_cal):
-        return (self.sram_state_matrix[self.subsum_cnt_idx_cal][blocknum_col_cal * self.block_col_std + self.block_col_idx_cal] == utils.READY)
+        return (self.sram_state_matrix[self.subsum_cnt_idx_cal * self.logic_sram_col_cnt_std + blocknum_col_cal * self.block_col_std + self.block_col_idx_cal] == utils.READY)
 
     def update_to_remove(self, blocknum_col, block_col_idx_cal):
-        self.sram_state_matrix[self.subsum_cnt_idx_cal][blocknum_col * self.block_col_std + block_col_idx_cal] = utils.REMOVE
+        self.sram_state_matrix[self.subsum_cnt_idx_cal * self.logic_sram_col_cnt_std + blocknum_col * self.block_col_std + block_col_idx_cal] = utils.REMOVE
 
     def cal_advance(self, blocknum_cal):
         is_sram1_advance = False

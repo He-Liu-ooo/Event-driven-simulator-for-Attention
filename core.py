@@ -6,7 +6,7 @@ class Core:
     Core of the cluster
     A core composes of 2 SRAMs, 1 calculator
 
-    block_cal: 2 elements, record which block is now under calculation
+    block_cal: 2 elements, in the shape of result matrix, record which block is now under calculation
                [row, col]
     """
 
@@ -34,6 +34,20 @@ class Core:
         print("|")
         print("| Calculator")
         self.calculator_and_array.dump_configs()
+        print("----------------------------------------------")
+    
+    def dump_mappings(self):
+        print("----------------------------------------------")
+        print("| Core Mappings")
+        print("|")
+        print("| SRAM1")
+        self.sram1.dump_mappings()
+        print("|")
+        print("| SRAM2")
+        self.sram2.dump_mappings()
+        print("|")
+        print("| Calculator")
+        self.calculator_and_array.dump_mappings()
         print("----------------------------------------------")
 
     def dump_cal_status(self):
@@ -72,4 +86,13 @@ class Core:
         self.sram2.reset()
         self.calculator_and_array.reset()
         self.blocknum_cal = [0, 0]
+
+    def reconfigure(self, block_cnt):
+        """ 
+        When switch to a different calculation stage,  some configurations may change
+
+        block_cnt: number of mac_lane * mac_lane blocks in the result matrix
+        """
+        
+        self.calculator_and_array.reconfigure(block_cnt)
     
