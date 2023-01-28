@@ -10,12 +10,14 @@ This is an event-driven hardware simulator for simulating the latency of Attenti
              |--- GlobalBuffer
              |
              |--- CalculatorAndArray
+             |
+             |--- Softmax
 
     Hardware structure:
             |--- SRAM1  
     Core ------- SRAM2
             |--- CalculatorAndArray
     GlobalBuffer
-    
+    Softmax
 
                   

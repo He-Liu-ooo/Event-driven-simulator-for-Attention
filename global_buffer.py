@@ -1,6 +1,8 @@
 from base_unit import BaseUnit
 import utils
 
+import numpy as np
+
 class GlobalBuffer(BaseUnit):
     """ 
     Global buffer of a cluster
@@ -8,12 +10,17 @@ class GlobalBuffer(BaseUnit):
     Suppose it can support the data transfer of all sub-SRAMs in one access
 
     sram1_busy: if the GB is transferring data from core sram1 now
+    sram2_busy: if the GB is transferring data from core sram2 now
     array_busy: if the GB is transferring data from core array now
+    softmax_busy: if the GB is transferring data to softmax unit now
     row, col: which data in core's sram is the global buffer transfer now
     colnum2: record which mac_lane * mac_lane col of sram2 is now transferring
     rownum1: record which time of the  whole sram1 is now transferring(in seq-len=384 case, sram1 will be updated 384/mac_lane/(sram1_height/(embedding_dim/mac_num))-1=5 times)
     array_idx_rm: which data in core's array is the global buffer transfer now
                difference between array_idx_cal in calculator_and_array, which indicates position id that needs to accept the next data
+    a_row: record which row of A is executing softmax
+    softmax_start: record the transfer to/from softmax starts from which block
+    softmax_end: record the transfer to/from softmax ends at which block
 
     blocknum_row_cnt: number of mac_lane rows need to be replaced
     array_data_cnt: number of mac_lane data need to be replaced
@@ -25,27 +32,31 @@ class GlobalBuffer(BaseUnit):
     array_complete1: indicates whether the calculated data is all transferred into gb(True when the last data starts transferring)
     array_complete2: indicates whether the calculated data is all transferred into gb(True when the last data finishes transferring)
 
+    sram2_latency_counter: latency counter for sram2, width equal to chosen bandwidth
     array_latency_counter: latency counter for the data transfer of array
+    softmax_latency_counter: latency counter for the data transfer between GB and Softmax
+
     array_data_counter: record how many data has been moved into gb
 
-    sram2_latency_counter: latency counter for sram2, width equal to chosen bandwidth
-
-    num_working: number of data that are transferred at the same time, < self.num_working_std
-                 this is for sram2 only
+    softmax_bandwidth: number of mac_lane*mac_lane blocks can be transferred from GB to Softmax Unit at a time
     """
 
-    def __init__(self, latency_count):
+    def __init__(self, latency_count, softmax_bandwidth=0):
         super(GlobalBuffer, self).__init__(latency_count)
 
         self.sram1_busy = False
         self.sram2_busy = False
         self.array_busy = False
+        self.softmax_busy = False
 
         self.row = [0, 0]
         self.col = [0, 0]
         self.colnum2 = 1
         self.rownum1 = 1
         self.array_idx_rm = 0
+        self.a_row = 0
+        self.softmax_start = 0
+        self.softmax_end = softmax_bandwidth - 1
 
         self.blocknum_row_cnt = 0
         self.array_data_cnt = 0
@@ -56,29 +67,22 @@ class GlobalBuffer(BaseUnit):
         self.array_complete1 = False
         self.array_complete2 = False
 
+        self.sram2_latency_counter = 0
         self.array_latency_counter = 0
+        self.softmax_latency_counter = 0
+
         self.array_data_counter = 0
 
-        self.sram2_latency_counter = 0
+        self.softmax_bandwidth = softmax_bandwidth
 
-        self.num_working = 0
         
     def dump_configs(self):
         print("----------------------------------------------")
         print("| Global Buffer Configuration")
         print("| + access latency: " + str(self.latency_count * utils.METATIME) + "ns")
+        print("| + softmax bandwidth: " + str(self.softmax_bandwidth))
         print("----------------------------------------------")
-
-    def dump_rm_status(self, idx):
-        print("---------------------------")
-        print(" Global buffer " + str(idx) + " status:")
-        print(" + is busy for sram1: " + str(self.sram1_busy))
-        print(" + is busy for array: " + str(self.array_busy))
-        print(" + Next transferring data from sram1: [" + str(self.row[0]) + ", " + str(self.col[0]) + "]")
-        print(" + Next transferring data from sram2: [" + str(self.row[1]) + ", " + str(self.col[1]) + "]")
-        print(" + Next transferring data from array: " + str(self.array_idx_rm))
-        print("---------------------------")
-
+    
     def dump_mappings(self, idx):
         print("----------------------------------------------")
         print("| Global buffer " + str(idx) + " Mappings")
@@ -88,7 +92,24 @@ class GlobalBuffer(BaseUnit):
         print("| + logic SRAM2 state matrix: [" + str(self.sram_subsum_cnt) + ", " + str(self.sram2_colnum_cnt) + "]")
         print("----------------------------------------------")
 
-    def add_mapping(self, blocknum_row_cnt, array_data_cnt, sram_subsum_cnt, sram1_rownum_cnt, sram2_colnum_cnt):
+    def dump_rm_status(self, idx):
+        print("---------------------------")
+        print(" Global buffer " + str(idx) + " status:")
+        # print(" + is busy for sram1: " + str(self.sram1_busy))
+        # print(" + is busy for array: " + str(self.array_busy))
+        print(" + Next transferring data from sram1: [" + str(self.row[0]) + ", " + str(self.col[0]) + "]")
+        print(" + Next transferring data from sram2: [" + str(self.row[1]) + ", " + str(self.col[1]) + "]")
+        print(" + Next transferring data from array: " + str(self.array_idx_rm))
+        print("---------------------------")
+
+    def dump_a_state_matrix(self):
+        print("A state matrix in GB:")
+        print(self.a_state_matrix)
+        print("Row of softmax: " + str(self.a_row))
+        print("[start, end] = [" + str(self.softmax_start) + ", " + str(self.softmax_end) + "]")
+        print("softmax_busy = " + str(self.softmax_busy))
+        
+    def add_mapping(self, blocknum_row_cnt, array_data_cnt, sram_subsum_cnt, sram1_rownum_cnt, sram2_colnum_cnt, flag=False):
         """  
         # TODO not implemented yet
         num_working_std: maximum number of data can be transferred at the same time, which is equal to mac_lane, 
@@ -113,7 +134,28 @@ class GlobalBuffer(BaseUnit):
         self.sram1_rownum_cnt = sram1_rownum_cnt
         self.sram2_colnum_cnt = sram2_colnum_cnt
 
+        if flag:
+            self.a_state_matrix = np.zeros((self.blocknum_row_cnt, int(self.array_data_cnt // self.blocknum_row_cnt)), dtype=int)
+            print("A state matrix size: [" + str(self.a_state_matrix.shape[0]) + ", " + str(self.a_state_matrix.shape[1]) + "]")
+
         # self.num_working_std = num_working
+
+    def update_to_a(self, block_counter):
+        if block_counter > 0:
+            row = int((block_counter - 1) // self.a_state_matrix.shape[1])
+            col = block_counter - 1 - row * self.a_state_matrix.shape[1]
+            print("update_to_a: [" + str(row) + ", " + str(col) + "], block_counter: " + str(block_counter))
+            self.a_state_matrix[row][col] = utils.A
+
+    def update_to_cal(self, start, end):
+        for i in range(start, end + 1):
+            self.a_state_matrix[self.a_row][i] = utils.A_CAL
+
+    def update_to_asoftmax(self, start, end):
+        for i in range(start, end + 1):
+            self.a_state_matrix[self.a_row][i] = utils.A_SOFTMAX
+        if end == (self.a_state_matrix.shape[1] - 1):
+            self.a_row += 1
 
     def rowcol_advance1(self):
         """ For SRAM1 """
@@ -193,3 +235,55 @@ class GlobalBuffer(BaseUnit):
             self.array_idx_advance(array_state_matrix.shape[0])
 
         return idx
+
+    def find_softmax_null_target(self):
+        """ Find the target data in GB that will be transferred to Softmax """
+
+        start = 0
+        end = 0
+        if self.softmax_end < (self.a_state_matrix.shape[1] - 1):
+            if (self.a_state_matrix[self.a_row][self.softmax_end] == utils.A):
+                for i in range(self.softmax_start, self.softmax_end + 1):
+                    self.a_state_matrix[self.a_row][i] = utils.REMOVING
+                start = self.softmax_start
+                end = self.softmax_end
+                self.softmax_start = self.softmax_end + 1
+                self.softmax_end = self.softmax_start + self.softmax_bandwidth - 1
+                self.softmax_busy = True
+        else:
+            if (self.a_state_matrix[self.a_row][-1] == utils.A):
+                for i in range(self.softmax_start, self.a_state_matrix.shape[1]):
+                    self.a_state_matrix[self.a_row][i] = utils.REMOVING
+                start = self.softmax_start
+                end = self.a_state_matrix.shape[1] - 1
+                self.softmax_start = 0
+                self.softmax_end = self.softmax_bandwidth - 1
+                self.softmax_busy = True
+
+        return (start, end)
+
+    def find_softmax_res_target(self):
+        """ Find softmax result target and transfer it back to GB """
+        start = 0
+        end = 0
+        if self.softmax_end < (self.a_state_matrix.shape[1] - 1):
+            for i in range(self.softmax_start, self.softmax_end + 1):
+                self.a_state_matrix[self.a_row][i] = utils.REMOVING
+            start = self.softmax_start
+            end = self.softmax_end
+            self.softmax_start = self.softmax_end + 1
+            self.softmax_end = self.softmax_start + self.softmax_bandwidth - 1
+        else:
+            for i in range(self.softmax_start, self.a_state_matrix.shape[1]):
+                self.a_state_matrix[self.a_row][i] = utils.REMOVING
+            start = self.softmax_start
+            end = self.a_state_matrix.shape[1] - 1
+            self.softmax_start = 0
+            self.softmax_end = self.softmax_bandwidth - 1
+        
+        self.softmax_busy = True
+
+        return (start, end)
+
+    def softmax_complete(self):
+        return (self.a_state_matrix[-1][-1] == utils.A_SOFTMAX)

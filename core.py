@@ -1,5 +1,8 @@
 from calculator_and_array import CalculatorAndArray
 from sram import SRAM1, SRAM2
+import utils
+
+import numpy as np
 
 class Core:
     """ 
@@ -8,6 +11,7 @@ class Core:
 
     block_cal: 2 elements, in the shape of result matrix, record which block is now under calculation
                [row, col]
+    block_rownum_softxmax: when the core is calculating Q*K, this variable indicates which row is going to execute softmax next
     """
 
     def __init__(self, sram1_num, sram1_height, sram1_width,
@@ -79,7 +83,7 @@ class Core:
             self.sram1.cal_advance(self.blocknum_cal, self.sram2.complete)
 
     def is_complete(self):
-        return (self.sram1.complete | self.sram2.complete)
+        return (self.sram1.complete | self.sram2.complete)     
 
     def reset(self):
         self.sram1.reset()
