@@ -144,7 +144,7 @@ class GlobalBuffer(BaseUnit):
         if block_counter > 0:
             row = int((block_counter - 1) // self.a_state_matrix.shape[1])
             col = block_counter - 1 - row * self.a_state_matrix.shape[1]
-            print("update_to_a: [" + str(row) + ", " + str(col) + "], block_counter: " + str(block_counter))
+            # print("update_to_a: [" + str(row) + ", " + str(col) + "], block_counter: " + str(block_counter))
             self.a_state_matrix[row][col] = utils.A
 
     def update_to_cal(self, start, end):
@@ -156,12 +156,12 @@ class GlobalBuffer(BaseUnit):
             self.a_state_matrix[self.a_row][i] = utils.A_SOFTMAX
         if end == (self.a_state_matrix.shape[1] - 1):
             self.a_row += 1
-
+    
     def rowcol_advance1(self):
         """ For SRAM1 """
         if (self.col[0] + 1) < self.sram_subsum_cnt:
             self.col[0] += 1
-        elif ((self.row[0] + 1) < self.sram1_rownum_cnt) and ((self.row[0] + 1) < self.blocknum_row_cnt):
+        elif ((self.row[0] + 1) < self.sram1_rownum_cnt) and ((self.row[0] + (self.rownum1 - 1) * self.sram1_rownum_cnt + 1) < self.blocknum_row_cnt):
             self.row[0] += 1
             self.col[0] = 0
         elif (self.row[0] + (self.rownum1 - 1) * self.sram1_rownum_cnt + 1) < self.blocknum_row_cnt:
@@ -224,6 +224,40 @@ class GlobalBuffer(BaseUnit):
             assert(0)
 
         return idx
+
+    def find_sram_target_a(self, sram_state_matrix, a_state_matrix, sram1_rownum_cnt):
+        """ 
+        Find the target data in sram1 that will be transferred and check if GB has the corresponding data 
+
+        sram1_rownum_cnt: number of mac_lane rows a sub-SRAM can hold at the same time
+        """
+
+        row = 0
+        col = 0
+        idx = 0
+        valid = False
+
+        if sram_state_matrix[self.row[0] * self.sram_subsum_cnt + self.col[0]] == utils.REMOVE:
+            # sram has a vacancy, now we need to check if GB has a candidate
+            row = self.row[0]
+            col = self.col[0]
+            valid = self.check_a(row, col, a_state_matrix, sram1_rownum_cnt)
+            if valid:
+                # GB has a corresponding candidate
+                self.sram1_busy = True
+                self.rowcol_advance1()
+                idx = row * self.sram_subsum_cnt + col
+
+        return idx
+
+    def check_a(self, row, col, a_state_matrix, sram1_rownum_cnt):
+        # print("[row, col]: [" + str(row) + ", " + str(col) + "]")
+        # print("rownum1: " + str(self.rownum1))
+        # print("sram1_rownum_cnt: " + str(self.sram1_rownum_cnt))
+        a_row = row + (self.rownum1 - 1) * sram1_rownum_cnt
+        if (a_state_matrix[a_row][col * 2] == utils.A_SOFTMAX) and (a_state_matrix[a_row][col * 2 + 1] == utils.A_SOFTMAX):
+            return True
+        return False
 
     def find_array_target(self, array_state_matrix):
         """ Find the target data in array that will be transferred """
