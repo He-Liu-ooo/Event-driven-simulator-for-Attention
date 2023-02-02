@@ -12,7 +12,7 @@ REMOVING: data that are removing into GB
 READY -> REMOVE -> REMOVING -> READY
 """
 READY = 0
-REMOVE = 1
+REMOVE = 1  # NULL
 REMOVING = 2
 
 

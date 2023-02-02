@@ -26,9 +26,9 @@ class Core:
 
         self.blocknum_cal = [0, 0]
 
-    def dump_configs(self):
+    def dump_configs(self, id):
         print("----------------------------------------------")
-        print("| Core Configuration")
+        print("| " + id + " Core Configuration")
         print("|")
         print("| SRAM1")
         self.sram1.dump_configs()
@@ -40,9 +40,9 @@ class Core:
         self.calculator_and_array.dump_configs()
         print("----------------------------------------------")
     
-    def dump_mappings(self):
+    def dump_mappings(self, id):
         print("----------------------------------------------")
-        print("| Core Mappings")
+        print("| " + id + " Core Mappings")
         print("|")
         print("| SRAM1")
         self.sram1.dump_mappings()
@@ -54,19 +54,20 @@ class Core:
         self.calculator_and_array.dump_mappings()
         print("----------------------------------------------")
 
-    def dump_cal_status(self):
+    def dump_cal_status(self, id):
         print("-------------------")
-        print("Calculation status")
+        print(id + " Calculation status")
         print("block: [" + str(self.blocknum_cal[0]) + ", " + str(self.blocknum_cal[1]) + "]")
         self.sram1.dump_cal_status()
         self.sram2.dump_cal_status(self.blocknum_cal[1])
         self.calculator_and_array.dump_cal_status()
         print("-------------------")
 
-    def dump_state_matrix(self):
+    def dump_state_matrix(self, id):
         # if (self.blocknum_cal[0] == 3) & (self.blocknum_cal[1] ==3):
-        self.sram1.dump_state_matrix("SRAM1")
-        self.sram2.dump_state_matrix("SRAM2")
+        print(id + " Core State Matrix")
+        self.sram1.dump_state_matrix("SRAM1", id)
+        self.sram2.dump_state_matrix("SRAM2", id)
         self.calculator_and_array.dump_state_matrix()
 
     def sram_ready(self):
@@ -80,10 +81,16 @@ class Core:
 
         # sram2 has a finer granularity
         if self.sram2.cal_advance(self.blocknum_cal):
-            self.sram1.cal_advance(self.blocknum_cal, self.sram2.complete)
+            self.sram1.cal_advance(self.blocknum_cal, self.sram2.cal_complete)
+
+    def sram_cal_advance_qk(self):
+        """ Advance SRAM's calculation index in case of Q*K calculation, which means the index should be advanced in a ring format """
+        
+        if self.sram2.cal_advance_qk(self.blocknum_cal):
+            self.sram1.cal_advance_qk(self.blocknum_cal, self.sram2.cal_complete)
 
     def is_complete(self):
-        return (self.sram1.complete | self.sram2.complete)     
+        return (self.sram1.cal_complete | self.sram2.cal_complete)     
 
     def reset(self):
         self.sram1.reset()

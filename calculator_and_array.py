@@ -14,11 +14,16 @@ class CalculatorAndArray(BaseUnit):
     array_state_matrix: indicating data status of array
 
     array_idx_cal: array position that is going to hold the result calculated data 
+    array_idx_rm: array position that is transferring data to next core's SRAM
     subsum_counter: counter to count how many subsums have been accumulated in the array
                     if first subsums, subsum_counter = 0
 
     block_cnt: number of mac_lane * mac_lane blocks in the result matrix
-    block_counter: number of mac_lane * mac_lane blocks in the result matrix that finish calculation
+    block_counter_cal: number of mac_lane * mac_lane blocks in the result matrix that finish calculation
+    block_counter_rm: number of mac_lane * mac_lane blocks in the result matrix that finish removing
+
+    array_sram_busy: if this core is busy transferring data from array to next core's SRAM
+    sram_latency_counter: 
     """
 
     def __init__(self, mac_lane, mac_num, block_cnt, latency_count=1):
@@ -31,9 +36,14 @@ class CalculatorAndArray(BaseUnit):
         self.array_state_matrix = np.zeros(mac_lane, dtype=int)
 
         self.array_idx_cal = 0
+        self.array_idx_rm = 0
         self.subsum_counter = 0
         self.block_cnt = block_cnt
-        self.block_counter = 0
+        self.block_counter_cal = 0
+        self.block_counter_rm = 0
+
+        self.array_sram_busy = False
+        self.sram_latency_counter = 0
     
     def dump_configs(self): 
         print("| + MAC lane: " + str(self.mac_lane))
@@ -43,7 +53,8 @@ class CalculatorAndArray(BaseUnit):
         print("| + operating latency: " + str(self.latency_count * utils.METATIME) + "ns")
 
     def dump_cal_status(self):
-        print("array: [" + str(self.array_idx_cal)  + "(id), " + str(self.subsum_counter) + "(subsum_cnt/" + str(self.subsum_cnt - 1) + ")], block number: " + str(self.block_counter))
+        print("array: [" + str(self.array_idx_cal)  + "(id), " + str(self.subsum_counter) + "(subsum_cnt/" + str(self.subsum_cnt - 1) + ")], block number: " + str(self.block_counter_cal))
+        print("block_rm number: " + str(self.block_counter_rm))
 
     def dump_state_matrix(self):
         print(self.array_state_matrix)
@@ -80,14 +91,34 @@ class CalculatorAndArray(BaseUnit):
 
             if self.subsum_counter == self.subsum_cnt:
                 self.subsum_counter = 0
-                self.block_counter += 1
+                self.block_counter_cal += 1
                 # for the last data in the array
                 self.update_to_completesum()
 
             self.array_idx_cal = 0
 
-            if self.block_counter == self.block_cnt:
+            if self.block_counter_cal == self.block_cnt:
                 self.complete = True
+
+    def array_idx_rm_advance(self):
+        if self.array_idx_rm + 1 < self.mac_lane:
+            self.array_idx_rm += 1
+        else:
+            self.array_idx_rm = 0
+            self.block_counter_rm += 1
+
+    def find_array_target(self):
+        """ Find the target data in array that will be transferred """
+        idx = 0
+        print("array_idx_rm in array_idx_advance(): " + str(self.array_idx_rm))
+        print("self.array_state_matrix[self.array_idx_rm]: " + str(self.array_state_matrix[self.array_idx_rm]))
+        print("array state matrix")
+        print(self.array_state_matrix)
+        if self.array_state_matrix[self.array_idx_rm] == utils.COMPLETESUM:
+            self.array_sram_busy = True
+            idx = self.array_idx_rm
+            self.array_idx_rm_advance()
+        return idx
 
     def add_mapping(self, subsum_cnt):
         """
@@ -113,7 +144,7 @@ class CalculatorAndArray(BaseUnit):
         self.complete = False
         self.array_idx_cal = 0
         self.subsum_counter = 0
-        self.block_counter = 0
+        self.block_counter_cal = 0
         super().reset()
 
     def reconfigure(self, block_cnt):

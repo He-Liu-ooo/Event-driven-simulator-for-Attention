@@ -83,9 +83,9 @@ class GlobalBuffer(BaseUnit):
         print("| + softmax bandwidth: " + str(self.softmax_bandwidth))
         print("----------------------------------------------")
     
-    def dump_mappings(self, idx):
+    def dump_mappings(self, id):
         print("----------------------------------------------")
-        print("| Global buffer " + str(idx) + " Mappings")
+        print("| " + id + " Global buffer Mappings")
         print("| + number of mac_lane rows in result matrix: " + str(self.blocknum_row_cnt))
         print("| + number of mac_lane*mac_lane blocks in result matrix: " + str(self.array_data_cnt))
         print("| + logic SRAM1 state matrix: [" + str(self.blocknum_row_cnt) + "/" + str(self.sram1_rownum_cnt) + ", " + str(self.sram_subsum_cnt) + "]")
