@@ -110,10 +110,10 @@ class CalculatorAndArray(BaseUnit):
     def find_array_target(self):
         """ Find the target data in array that will be transferred """
         idx = 0
-        print("array_idx_rm in array_idx_advance(): " + str(self.array_idx_rm))
-        print("self.array_state_matrix[self.array_idx_rm]: " + str(self.array_state_matrix[self.array_idx_rm]))
-        print("array state matrix")
-        print(self.array_state_matrix)
+        # print("array_idx_rm in array_idx_advance(): " + str(self.array_idx_rm))
+        # print("self.array_state_matrix[self.array_idx_rm]: " + str(self.array_state_matrix[self.array_idx_rm]))
+        # print("array state matrix")
+        # print(self.array_state_matrix)
         if self.array_state_matrix[self.array_idx_rm] == utils.COMPLETESUM:
             self.array_sram_busy = True
             idx = self.array_idx_rm

@@ -140,12 +140,15 @@ class GlobalBuffer(BaseUnit):
 
         # self.num_working_std = num_working
 
-    def update_to_a(self, block_counter):
+    def update_to_a1(self, block_counter):
         if block_counter > 0:
             row = int((block_counter - 1) // self.a_state_matrix.shape[1])
             col = block_counter - 1 - row * self.a_state_matrix.shape[1]
             # print("update_to_a: [" + str(row) + ", " + str(col) + "], block_counter: " + str(block_counter))
             self.a_state_matrix[row][col] = utils.A
+    
+    def update_to_a2(self, row, col):
+        self.a_state_matrix[row][col] = utils.A
 
     def update_to_cal(self, start, end):
         for i in range(start, end + 1):
@@ -275,24 +278,26 @@ class GlobalBuffer(BaseUnit):
 
         start = 0
         end = 0
-        if self.softmax_end < (self.a_state_matrix.shape[1] - 1):
-            if (self.a_state_matrix[self.a_row][self.softmax_end] == utils.A):
-                for i in range(self.softmax_start, self.softmax_end + 1):
-                    self.a_state_matrix[self.a_row][i] = utils.REMOVING
-                start = self.softmax_start
-                end = self.softmax_end
-                self.softmax_start = self.softmax_end + 1
-                self.softmax_end = self.softmax_start + self.softmax_bandwidth - 1
-                self.softmax_busy = True
-        else:
-            if (self.a_state_matrix[self.a_row][-1] == utils.A):
-                for i in range(self.softmax_start, self.a_state_matrix.shape[1]):
-                    self.a_state_matrix[self.a_row][i] = utils.REMOVING
-                start = self.softmax_start
-                end = self.a_state_matrix.shape[1] - 1
-                self.softmax_start = 0
-                self.softmax_end = self.softmax_bandwidth - 1
-                self.softmax_busy = True
+        print("[self.softmax_start, self.softmax_end]: [" + str(self.softmax_start) + ", " + str(self.softmax_end) + "]")
+        if self.a_row < self.blocknum_row_cnt:
+            if self.softmax_end < (self.a_state_matrix.shape[1] - 1):
+                if (self.a_state_matrix[self.a_row][self.softmax_end] == utils.A):
+                    for i in range(self.softmax_start, self.softmax_end + 1):
+                        self.a_state_matrix[self.a_row][i] = utils.REMOVING
+                    start = self.softmax_start
+                    end = self.softmax_end
+                    self.softmax_start = self.softmax_end + 1
+                    self.softmax_end = self.softmax_start + self.softmax_bandwidth - 1
+                    self.softmax_busy = True
+            else:
+                if (self.a_state_matrix[self.a_row][-1] == utils.A):
+                    for i in range(self.softmax_start, self.a_state_matrix.shape[1]):
+                        self.a_state_matrix[self.a_row][i] = utils.REMOVING
+                    start = self.softmax_start
+                    end = self.a_state_matrix.shape[1] - 1
+                    self.softmax_start = 0
+                    self.softmax_end = self.softmax_bandwidth - 1
+                    self.softmax_busy = True
 
         return (start, end)
 
@@ -321,3 +326,6 @@ class GlobalBuffer(BaseUnit):
 
     def softmax_complete(self):
         return (self.a_state_matrix[-1][-1] == utils.A_SOFTMAX)
+
+    def transfer_to_softmax_complete(self):
+        return (self.a_state_matrix[-1][-1] == utils.A_CAL)

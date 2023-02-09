@@ -50,6 +50,20 @@ class SRAM(BaseUnit):
                 print(self.sram_state_matrix[96:])
             elif mode == "Q*K":
                 print(self.sram_state_matrix.reshape(-1,2)[:24])
+            elif mode == "A'*V":
+                print(self.sram_state_matrix[0:6])
+                print(self.sram_state_matrix[6:12])
+                print(self.sram_state_matrix[12:18])
+                print(self.sram_state_matrix[18:24])
+                print(self.sram_state_matrix[24:30])
+                print(self.sram_state_matrix[30:36])
+                print(self.sram_state_matrix[36:42])
+                print(self.sram_state_matrix[42:48])
+                print(self.sram_state_matrix[48:54])
+                print(self.sram_state_matrix[54:60])
+                print(self.sram_state_matrix[60:66])
+                print(self.sram_state_matrix[66:72])
+                print(self.sram_state_matrix[72:78])
         else:
             if (mode == "Q") or (mode == "K") or (mode == "V"): 
                 print("0")
@@ -62,9 +76,18 @@ class SRAM(BaseUnit):
                 print(self.sram_state_matrix[1984:])
             elif mode == "Q*K":
                 print("0")
-                print(self.sram_state_matrix[:384])
+                print(self.sram_state_matrix[:192])
                 print("1")
-                print(self.sram_state_matrix[384:768])
+                print(self.sram_state_matrix[192:384])
+            elif mode == "A'*V":
+                print(self.sram_state_matrix[:64])
+                print(self.sram_state_matrix[64:128])
+                print(self.sram_state_matrix[128:192])
+                print(self.sram_state_matrix[192:256])
+                print(self.sram_state_matrix[256:320])
+                print(self.sram_state_matrix[320:384])
+                print(self.sram_state_matrix[384:448])
+
 
     def update_to_ready(self, idx):
         self.sram_state_matrix[idx] = utils.READY
@@ -135,6 +158,10 @@ class SRAM1(SRAM):
         for i in range(self.subsum_cnt_std):
             self.sram_state_matrix[blocknum_row_sram_idx_cal * self.subsum_cnt_std + i] = utils.REMOVE
     
+    def update_to_ready_from_softmax(self, a_row, block_idx_start, block_idx_end):
+        for i in range(block_idx_start // 2, (block_idx_end + 1) // 2):
+            self.sram_state_matrix[a_row * self.subsum_cnt_std + i] = utils.READY
+
                                         # in order to get the last line of sram1 data to be replaced
     def cal_advance(self, blocknum_cal, sram2_cal_complete):
         if self.cal_complete == False:  # FIXME self.complete is always false
@@ -249,26 +276,39 @@ class SRAM2(SRAM):
     def update_to_remove(self, blocknum_col, block_col_idx_cal):
         self.sram_state_matrix[self.subsum_cnt_idx_cal * self.logic_sram_col_cnt_std + blocknum_col * self.block_col_std + block_col_idx_cal] = utils.REMOVE
 
-    def update_to_ready_from_array(self, blocknum_col, array_block_cnt_std):
+    def update_to_ready_from_array(self, blocknum_col, array_block_cnt_std, matrix):
         """ 
         Update SRAM2's state matrix according to next core's array data transfer 
 
         blocknum_col: number of blocks in col in the operand matrix
                       4 for head embedding dim = 64 and mac_lane = 16 case
+        matrix: whether K or V matrix, which decides how SRAM2 is filled
         """
 
-        # row idx (starts from 0) of sram state matrix 
-        row = int((self.array_block_counter // 2 + 1) % 2)
-        # col has mac_lane sub-cols
-        col = (self.array_block_counter + 2) // blocknum_col - 1
-        for i in range(self.block_col_std):
-            self.sram_state_matrix[row * self.logic_sram_col_cnt_std + col * self.block_col_std + i] = utils.READY
+        if matrix == "K":
+            # row idx (starts from 0) of sram state matrix 
+            row = int((self.array_block_counter // 2 + 1) % 2)
+            # col has mac_lane sub-cols
+            col = (self.array_block_counter + 2) // blocknum_col - 1
+            print("SRAM2 [row, col]: [" + str(row) + ", " + str(col) +"]")
+            for i in range(self.block_col_std):
+                self.sram_state_matrix[row * self.logic_sram_col_cnt_std + col * self.block_col_std + i] = utils.READY
+        elif matrix == "V":                        # FIXME 2 = mac_num//mac_lane * blocknum_col
+            row = (self.array_block_counter - 1) // (blocknum_col * 2)
+            col = (self.array_block_counter - 1) % blocknum_col
+            print("SRAM2 [row, col]: [" + str(row) + ", " + str(col) +"]")
+            for i in range(self.block_col_std):
+                self.sram_state_matrix[row * self.logic_sram_col_cnt_std + col * self.block_col_std + i] = utils.READY
+        else:
+            assert(0)
         
         if self.array_block_counter == array_block_cnt_std:
             self.write_complete = True
 
     def cal_advance(self, blocknum_cal):
         is_sram1_advance = False
+        print("blocknum_cal: " + str(blocknum_cal))
+        print("self.blocknum_col_std: " + str(self.blocknum_col_std))
         if self.cal_complete == False:
             # calculation of mac_lane width is not completed
             if (self.block_col_idx_cal + 1) < self.block_col_std:
