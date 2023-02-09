@@ -51,19 +51,31 @@ class SRAM(BaseUnit):
             elif mode == "Q*K":
                 print(self.sram_state_matrix.reshape(-1,2)[:24])
             elif mode == "A'*V":
-                print(self.sram_state_matrix[0:6])
-                print(self.sram_state_matrix[6:12])
-                print(self.sram_state_matrix[12:18])
-                print(self.sram_state_matrix[18:24])
-                print(self.sram_state_matrix[24:30])
-                print(self.sram_state_matrix[30:36])
-                print(self.sram_state_matrix[36:42])
-                print(self.sram_state_matrix[42:48])
-                print(self.sram_state_matrix[48:54])
-                print(self.sram_state_matrix[54:60])
-                print(self.sram_state_matrix[60:66])
-                print(self.sram_state_matrix[66:72])
-                print(self.sram_state_matrix[72:78])
+                # print(self.sram_state_matrix[0:6])
+                # print(self.sram_state_matrix[6:12])
+                # print(self.sram_state_matrix[12:18])
+                # print(self.sram_state_matrix[18:24])
+                # print(self.sram_state_matrix[24:30])
+                # print(self.sram_state_matrix[30:36])
+                # print(self.sram_state_matrix[36:42])
+                # print(self.sram_state_matrix[42:48])
+                # print(self.sram_state_matrix[48:54])
+                # print(self.sram_state_matrix[54:60])
+                # print(self.sram_state_matrix[60:66])
+                # print(self.sram_state_matrix[66:72])
+                # print(self.sram_state_matrix[72:78])
+                print(self.sram_state_matrix[0:12])
+                print(self.sram_state_matrix[12:24])
+                print(self.sram_state_matrix[24:36])
+                print(self.sram_state_matrix[36:48])
+                print(self.sram_state_matrix[48:60])
+                print(self.sram_state_matrix[60:72])
+                print(self.sram_state_matrix[72:84])
+                print(self.sram_state_matrix[84:96])
+                print(self.sram_state_matrix[96:108])
+                print(self.sram_state_matrix[108:120])
+                print(self.sram_state_matrix[120:128])
+
         else:
             if (mode == "Q") or (mode == "K") or (mode == "V"): 
                 print("0")
@@ -75,10 +87,14 @@ class SRAM(BaseUnit):
                 print("31")
                 print(self.sram_state_matrix[1984:])
             elif mode == "Q*K":
+                # print("0")
+                # print(self.sram_state_matrix[:192])
+                # print("1")
+                # print(self.sram_state_matrix[192:384])
                 print("0")
-                print(self.sram_state_matrix[:192])
+                print(self.sram_state_matrix[:384])
                 print("1")
-                print(self.sram_state_matrix[192:384])
+                print(self.sram_state_matrix[384:768])
             elif mode == "A'*V":
                 print(self.sram_state_matrix[:64])
                 print(self.sram_state_matrix[64:128])
@@ -86,7 +102,9 @@ class SRAM(BaseUnit):
                 print(self.sram_state_matrix[192:256])
                 print(self.sram_state_matrix[256:320])
                 print(self.sram_state_matrix[320:384])
-                print(self.sram_state_matrix[384:448])
+                print("last")
+                print(self.sram_state_matrix[640:704])
+                print(self.sram_state_matrix[704:768])
 
 
     def update_to_ready(self, idx):
@@ -290,13 +308,13 @@ class SRAM2(SRAM):
             row = int((self.array_block_counter // 2 + 1) % 2)
             # col has mac_lane sub-cols
             col = (self.array_block_counter + 2) // blocknum_col - 1
-            print("SRAM2 [row, col]: [" + str(row) + ", " + str(col) +"]")
+            # print("SRAM2 [row, col]: [" + str(row) + ", " + str(col) +"]")
             for i in range(self.block_col_std):
                 self.sram_state_matrix[row * self.logic_sram_col_cnt_std + col * self.block_col_std + i] = utils.READY
         elif matrix == "V":                        # FIXME 2 = mac_num//mac_lane * blocknum_col
             row = (self.array_block_counter - 1) // (blocknum_col * 2)
             col = (self.array_block_counter - 1) % blocknum_col
-            print("SRAM2 [row, col]: [" + str(row) + ", " + str(col) +"]")
+            # print("SRAM2 [row, col]: [" + str(row) + ", " + str(col) +"]")
             for i in range(self.block_col_std):
                 self.sram_state_matrix[row * self.logic_sram_col_cnt_std + col * self.block_col_std + i] = utils.READY
         else:
@@ -307,8 +325,8 @@ class SRAM2(SRAM):
 
     def cal_advance(self, blocknum_cal):
         is_sram1_advance = False
-        print("blocknum_cal: " + str(blocknum_cal))
-        print("self.blocknum_col_std: " + str(self.blocknum_col_std))
+        # print("blocknum_cal: " + str(blocknum_cal))
+        # print("self.blocknum_col_std: " + str(self.blocknum_col_std))
         if self.cal_complete == False:
             # calculation of mac_lane width is not completed
             if (self.block_col_idx_cal + 1) < self.block_col_std:

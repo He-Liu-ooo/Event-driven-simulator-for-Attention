@@ -15,7 +15,7 @@ class GlobalBuffer(BaseUnit):
     softmax_busy: if the GB is transferring data to softmax unit now
     row, col: which data in core's sram is the global buffer transfer now
     colnum2: record which mac_lane * mac_lane col of sram2 is now transferring
-    rownum1: record which time of the  whole sram1 is now transferring(in seq-len=384 case, sram1 will be updated 384/mac_lane/(sram1_height/(embedding_dim/mac_num))-1=5 times)
+    rownum1: record which time of the whole sram1 is now transferring(in seq-len=384 case, sram1 will be updated 384/mac_lane/(sram1_height/(embedding_dim/mac_num))-1=5 times)
     array_idx_rm: which data in core's array is the global buffer transfer now
                difference between array_idx_cal in calculator_and_array, which indicates position id that needs to accept the next data
     a_row: record which row of A is executing softmax
@@ -278,7 +278,7 @@ class GlobalBuffer(BaseUnit):
 
         start = 0
         end = 0
-        print("[self.softmax_start, self.softmax_end]: [" + str(self.softmax_start) + ", " + str(self.softmax_end) + "]")
+        # print("[self.softmax_start, self.softmax_end]: [" + str(self.softmax_start) + ", " + str(self.softmax_end) + "]")
         if self.a_row < self.blocknum_row_cnt:
             if self.softmax_end < (self.a_state_matrix.shape[1] - 1):
                 if (self.a_state_matrix[self.a_row][self.softmax_end] == utils.A):
