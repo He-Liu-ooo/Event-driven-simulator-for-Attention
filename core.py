@@ -100,7 +100,7 @@ class Core:
 
     def reconfigure(self, block_cnt):
         """ 
-        When switch to a different calculation stage,  some configurations may change
+        When switch to a different calculation stage, some configurations may change
 
         block_cnt: number of mac_lane * mac_lane blocks in the result matrix
         """

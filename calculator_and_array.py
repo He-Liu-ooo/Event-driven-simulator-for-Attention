@@ -23,7 +23,10 @@ class CalculatorAndArray(BaseUnit):
     block_counter_rm: number of mac_lane * mac_lane blocks in the result matrix that finish removing
 
     array_sram_busy: if this core is busy transferring data from array to next core's SRAM
-    sram_latency_counter: 
+    array_layernorm_busy: if this core is busy transferring data from array to LN
+
+    sram_latency_counter: when array needs to transfer data into next core's SRAM, we use this variable for counting latency
+                          when transferring data to LN, we use this counter as well
     """
 
     def __init__(self, mac_lane, mac_num, block_cnt, latency_count=1):
@@ -43,6 +46,8 @@ class CalculatorAndArray(BaseUnit):
         self.block_counter_rm = 0
 
         self.array_sram_busy = False
+        self.array_layernorm_busy = False
+
         self.sram_latency_counter = 0
     
     def dump_configs(self): 
@@ -107,15 +112,25 @@ class CalculatorAndArray(BaseUnit):
             self.array_idx_rm = 0
             self.block_counter_rm += 1
 
-    def find_array_target(self):
-        """ Find the target data in array that will be transferred """
+    def find_array_target(self, mode):
+        """ 
+        Find the target data in array that will be transferred 
+        
+        mode: if the function is called when transferring data from array to softmax or from array to ln
+        """
+
         idx = 0
         # print("array_idx_rm in array_idx_advance(): " + str(self.array_idx_rm))
         # print("self.array_state_matrix[self.array_idx_rm]: " + str(self.array_state_matrix[self.array_idx_rm]))
         # print("array state matrix")
         # print(self.array_state_matrix)
         if self.array_state_matrix[self.array_idx_rm] == utils.COMPLETESUM:
-            self.array_sram_busy = True
+            if mode == "sram":
+                self.array_sram_busy = True
+            elif mode == "ln":
+                self.array_layernorm_busy = True
+            else:
+                assert(0)
             idx = self.array_idx_rm
             self.array_idx_rm_advance()
         return idx
@@ -143,8 +158,18 @@ class CalculatorAndArray(BaseUnit):
         """
         self.complete = False
         self.array_idx_cal = 0
+        self.array_idx_rm = 0
         self.subsum_counter = 0
         self.block_counter_cal = 0
+        self.block_counter_rm = 0
+
+        self.array_state_matrix = np.zeros(self.mac_lane, dtype=int)
+
+        self.array_sram_busy = False
+        self.array_layernorm_busy = False
+
+        self.sram_latency_counter = 0
+
         super().reset()
 
     def reconfigure(self, block_cnt):

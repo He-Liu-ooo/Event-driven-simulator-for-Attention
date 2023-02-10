@@ -48,3 +48,17 @@ A = 1
 # REMOVING = 2
 A_CAL = 3 
 A_SOFTMAX = 4
+
+
+""" 
+State of the data of X in LN
+
+NULL: no data
+X: data of X has transferred to LN, waiting for calculation
+X_CAL: data of X finishes calculation
+REMOVING: data of calculated X is removing for next FC calculation 
+"""
+# NULL = 0
+X = 1
+X_CAL = 3
+# REMOVING = 2

@@ -43,7 +43,7 @@ class SRAM(BaseUnit):
     def dump_state_matrix(self, sram, mode):
         print(str(sram) + ":")
         if sram == "SRAM1":
-            if (mode == "Q") or (mode == "K") or (mode == "V"): 
+            if (mode == "Q") or (mode == "K") or (mode == "V") or (mode == "FC1"): 
                 print(self.sram_state_matrix[:32])
                 print(self.sram_state_matrix[32:64])
                 print(self.sram_state_matrix[64:96])
@@ -113,6 +113,13 @@ class SRAM(BaseUnit):
     def update_to_removing(self, idx):
         self.sram_state_matrix[idx] = utils.REMOVING
 
+    def reset(self):
+        self.cal_complete = False
+        self.write_complete = False
+        self.array_block_counter = 0
+        self.sram_state_matrix = np.ones(self.height, dtype=int)
+        super().reset()
+
 class SRAM1(SRAM):
     """
     Core SRAM1
@@ -180,6 +187,36 @@ class SRAM1(SRAM):
         for i in range(block_idx_start // 2, (block_idx_end + 1) // 2):
             self.sram_state_matrix[a_row * self.subsum_cnt_std + i] = utils.READY
 
+    def update_to_ready_from_ln(self, row_idx, sram_row_std):
+        """
+        sram_row_std: how many mac_lane rows should be assigned to this SRAM 
+        """
+        
+        # how many mac_lane rows of X can be stored in sram1 at the same time
+        row_num = self.height // self.subsum_cnt_std
+        print("row idx: " + str(row_idx))
+        idx = row_idx % row_num
+        print("sram row idx: " + str(idx))
+        for i in range(self.subsum_cnt_std):
+            self.sram_state_matrix[idx * self.subsum_cnt_std + i] = utils.READY
+
+        if row_idx == sram_row_std:
+            self.write_complete = True
+
+    def check_remove_state(self, row_idx):
+        """ Check whether the correspongding row in this sram is ready to be updated """
+        
+        row_num = self.height // self.subsum_cnt_std
+        idx = row_idx % row_num
+
+        res = True
+        for i in range (self.subsum_cnt_std):
+            if self.sram_state_matrix[idx * self.subsum_cnt_std + i] != utils.REMOVE:
+                res = False
+                break
+
+        return res
+
                                         # in order to get the last line of sram1 data to be replaced
     def cal_advance(self, blocknum_cal, sram2_cal_complete):
         if self.cal_complete == False:  # FIXME self.complete is always false
@@ -220,7 +257,6 @@ class SRAM1(SRAM):
                 self.blocknum_row_sram_idx_cal = blocknum_cal[0]
 
     def reset(self):
-        self.cal_complete = False
         self.blocknum_row_sram_idx_cal = 0
         self.subsum_cnt_idx_cal = 0
         super().reset()
@@ -418,7 +454,6 @@ class SRAM2(SRAM):
         return is_sram1_advance
 
     def reset(self):
-        self.cal_complete = False
         self.block_col_idx_cal = 0
         self.subsum_cnt_idx_cal = 0
         super().reset()
