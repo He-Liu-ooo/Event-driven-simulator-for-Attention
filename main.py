@@ -393,22 +393,29 @@ def dump_all(cores, global_buffers, softmax, layernorm, stage, latency, core_num
         #     cores[0].dump_state_matrix("FC1")
         # else:
         #     cores[0].dump_state_matrix("Q")
-        cores[0].dump_cal_status("Q")
-        # cores[1].dump_state_matrix("K")
-        cores[1].dump_cal_status("K")
-        # cores[2].dump_state_matrix("V")
-        cores[2].dump_cal_status("V")
+        if global_buffers[0].sram1_complete1 == False:
+            cores[0].dump_cal_status("Q")
+            # cores[1].dump_state_matrix("K")
+            cores[1].dump_cal_status("K")
+            # cores[2].dump_state_matrix("V")
+            cores[2].dump_cal_status("V")
         # cores[3].dump_state_matrix("Q*K")
-        cores[3].dump_cal_status("Q*K")
+        if cores[3].blocknum_cal[1] < 12:
+            cores[3].dump_cal_status("Q*K")
         # for i in range(5):
         #     global_buffers[i].dump_rm_status(i)
         # print("GB3 a state matrix")
-        print(global_buffers[3].a_state_matrix)
+        # print(global_buffers[3].a_state_matrix)
         # softmax[0].dump_cal_status()
         cores[4].dump_state_matrix("A'*V")
         cores[4].dump_cal_status("A'*V")
         layernorm[0].dump_cal_status()
         cores[5].dump_state_matrix("FC1")
+        cores[5].dump_cal_status("FC1")
+        cores[6].dump_state_matrix("FC2")
+        cores[6].dump_cal_status("FC2")
+        global_buffers[5].dump_rm_status("FC1")
+        global_buffers[6].dump_rm_status("FC2")
         # print("GB3.array_complete2: " + str(global_buffers[3].array_complete2))
     else:
         raise NotImplementedError("Core number of " + str(core_num) + " is not supported yet!")
@@ -433,6 +440,7 @@ def simulating(args):
 
     head_embedding_dim = int(args.embedding_dim // args.head_num) 
     sram1_height = int(args.SRAM_capacity // args.MAC_lane // args.MAC_num)
+    sram2_height = int(args.SRAM_capacity // args.MAC_num)
     blocknum_row = int(args.seq_length // args.MAC_lane)
     blocknum_col_qkv = int(head_embedding_dim // args.MAC_lane)
     blocknum_col_a = blocknum_row
@@ -449,6 +457,11 @@ def simulating(args):
     blocknum_row_sram1_subx = int(sram1_height // subsum_cnt_subx)
     blocknum_row_sram1_fc1 = blocknum_row_sram1_qkv
     blocknum_row_sram1_fc2 = int(sram1_height // subsum_cnt_fc2)
+    blocknum_col_sram2_qkv = int(sram2_height // subsum_cnt_qkv // args.MAC_lane)
+    blocknum_col_sram2_a = int(sram2_height // subsum_cnt_a // args.MAC_lane)
+    blocknum_col_sram2_subx = int(sram2_height // subsum_cnt_subx // args.MAC_lane)
+    blocknum_col_sram2_fc1 = int(sram2_height // subsum_cnt_fc1 // args.MAC_lane)
+    blocknum_col_sram2_fc2 = int(sram2_height // subsum_cnt_fc2 // args.MAC_lane)
 
     ## cores
     cores = []
@@ -516,8 +529,10 @@ def simulating(args):
         global_buffers[3].dump_configs()        
         
         global_buffers.append(GlobalBuffer(args.GB_access_latency))
-
         global_buffers[4].rownum1 = 2
+        
+        for i in range(2):
+            global_buffers.append(GlobalBuffer(args.GB_access_latency))
 
         if args.seq_length <= int(math.sqrt(args.SRAM_capacity)):
             # whether A is stored in GB or core SRAM
@@ -546,7 +561,7 @@ def simulating(args):
         cores[0].sram1.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_qkv, 
                                     subsum_cnt=subsum_cnt_qkv, blocknum_row_sram=blocknum_row_sram1_qkv)
         cores[0].sram2.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_qkv,
-                                    block_col=args.MAC_lane, subsum_cnt=subsum_cnt_qkv)
+                                    block_col=args.MAC_lane, subsum_cnt=subsum_cnt_qkv, blocknum_col_sram=blocknum_col_sram2_qkv)
         cores[0].calculator_and_array.add_mapping(subsum_cnt=subsum_cnt_qkv)    
 
         cores[0].dump_mappings("Q/K/V")   
@@ -556,35 +571,35 @@ def simulating(args):
             cores[i].sram1.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_qkv, 
                                     subsum_cnt=subsum_cnt_qkv, blocknum_row_sram=blocknum_row_sram1_qkv)
             cores[i].sram2.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_qkv,
-                                        block_col=args.MAC_lane, subsum_cnt=subsum_cnt_qkv)
+                                        block_col=args.MAC_lane, subsum_cnt=subsum_cnt_qkv, blocknum_col_sram=blocknum_col_sram2_qkv)
             cores[i].calculator_and_array.add_mapping(subsum_cnt=subsum_cnt_qkv)  
         cores[0].dump_mappings("Q/K/V")   
         
         cores[3].sram1.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_a, 
                                     subsum_cnt=subsum_cnt_a, blocknum_row_sram=blocknum_row_sram1_a)
         cores[3].sram2.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_a,
-                                    block_col=args.MAC_lane, subsum_cnt=subsum_cnt_a)
+                                    block_col=args.MAC_lane, subsum_cnt=subsum_cnt_a, blocknum_col_sram=blocknum_col_sram2_a)
         cores[3].calculator_and_array.add_mapping(subsum_cnt=subsum_cnt_a)  
         cores[3].dump_mappings("Q*K")
 
         cores[4].sram1.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_subx, 
                                     subsum_cnt=subsum_cnt_subx, blocknum_row_sram=blocknum_row_sram1_subx)
         cores[4].sram2.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_subx,
-                                    block_col=args.MAC_lane, subsum_cnt=subsum_cnt_subx)
+                                    block_col=args.MAC_lane, subsum_cnt=subsum_cnt_subx, blocknum_col_sram=blocknum_col_sram2_subx)
         cores[4].calculator_and_array.add_mapping(subsum_cnt=subsum_cnt_subx)  
         cores[4].dump_mappings("A'*V")
 
         cores[5].sram1.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_fc1,
                                     subsum_cnt=subsum_cnt_fc1, blocknum_row_sram=blocknum_row_sram1_fc1)
         cores[5].sram2.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_fc1,
-                                    block_col=args.MAC_lane, subsum_cnt=subsum_cnt_fc1)
+                                    block_col=args.MAC_lane, subsum_cnt=subsum_cnt_fc1, blocknum_col_sram=blocknum_col_sram2_fc1)
         cores[5].calculator_and_array.add_mapping(subsum_cnt=subsum_cnt_fc1)
         cores[5].dump_mappings("FC1")
         
         cores[6].sram1.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_fc2,
                                     subsum_cnt=subsum_cnt_fc2, blocknum_row_sram=blocknum_row_sram1_fc2)
         cores[6].sram2.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_fc2,
-                                    block_col=args.MAC_lane, subsum_cnt=subsum_cnt_fc2)
+                                    block_col=args.MAC_lane, subsum_cnt=subsum_cnt_fc2, blocknum_col_sram=blocknum_col_sram2_fc2)
         cores[6].calculator_and_array.add_mapping(subsum_cnt=subsum_cnt_fc2)
         cores[6].dump_mappings("FC2")
 
@@ -602,16 +617,29 @@ def simulating(args):
     """
     for i in range(3):
         global_buffers[i].add_mapping(blocknum_row_cnt=blocknum_row, array_data_cnt=blocknum_row * blocknum_col_qkv,
-                                        sram_subsum_cnt=subsum_cnt_qkv, sram1_rownum_cnt=blocknum_row_sram1_qkv, sram2_colnum_cnt=head_embedding_dim)
+                                        sram_subsum_cnt=subsum_cnt_qkv, sram1_rownum_cnt=blocknum_row_sram1_qkv, 
+                                        sram2_colnum_cnt=head_embedding_dim, sram2_sram_colnum_cnt=blocknum_col_sram2_qkv * args.MAC_lane)
     global_buffers[0].dump_mappings("Q/K/V")
 
     global_buffers[3].add_mapping(blocknum_row_cnt=blocknum_row, array_data_cnt=blocknum_row * blocknum_col_a,
-                                    sram_subsum_cnt=subsum_cnt_a, sram1_rownum_cnt=blocknum_row_sram1_a, sram2_colnum_cnt=args.seq_length, flag=True)
+                                    sram_subsum_cnt=subsum_cnt_a, sram1_rownum_cnt=blocknum_row_sram1_a, 
+                                    sram2_colnum_cnt=args.seq_length, sram2_sram_colnum_cnt=blocknum_col_sram2_a * args.MAC_lane, flag=True)
     global_buffers[3].dump_mappings("Q*K")
 
     global_buffers[4].add_mapping(blocknum_row_cnt=blocknum_row, array_data_cnt=blocknum_row * blocknum_col_subx,
-                                    sram_subsum_cnt=subsum_cnt_subx, sram1_rownum_cnt=blocknum_row_sram1_subx, sram2_colnum_cnt=head_embedding_dim)
+                                    sram_subsum_cnt=subsum_cnt_subx, sram1_rownum_cnt=blocknum_row_sram1_subx, 
+                                    sram2_colnum_cnt=head_embedding_dim, sram2_sram_colnum_cnt=blocknum_col_sram2_subx * args.MAC_lane)
     global_buffers[4].dump_mappings("A'*V")
+    
+    global_buffers[5].add_mapping(blocknum_row_cnt=blocknum_row, array_data_cnt=blocknum_row * blocknum_col_fc1,
+                                    sram_subsum_cnt=subsum_cnt_fc1, sram1_rownum_cnt=blocknum_row_sram1_fc1, 
+                                    sram2_colnum_cnt=4 * args.embedding_dim, sram2_sram_colnum_cnt=blocknum_col_sram2_fc1 * args.MAC_lane)
+    global_buffers[5].dump_mappings("FC1")
+    
+    global_buffers[6].add_mapping(blocknum_row_cnt=blocknum_row, array_data_cnt=blocknum_row * blocknum_col_fc2, 
+                                  sram_subsum_cnt=subsum_cnt_fc2, sram1_rownum_cnt=blocknum_row_sram1_fc2, 
+                                  sram2_colnum_cnt=args.embedding_dim, sram2_sram_colnum_cnt=blocknum_col_sram2_fc2 * args.MAC_lane)
+    global_buffers[6].dump_mappings("FC2")
 
 
     """ 
@@ -626,6 +654,11 @@ def simulating(args):
         raise NotImplementedError("Weight matrix size CAN'T exceed core SRAM capacity!")
     else:
         pass 
+    
+    # capacity of SRAM2 cannot be exceeded by a mac_lane column of FC2 weight matrix
+    # eg. 2048 >= 1024*4*16/32  
+    if (args.SRAM_capacity // args.MAC_num) < (args.embedding_dim * 4 * args.MAC_lane // args.MAC_num):
+        raise NotImplementedError("A mac_lane column of FC2 weight matrix size CAN'T exceed SRAM capacity!")
 
 
     """ Simulating """
@@ -643,9 +676,9 @@ def simulating(args):
     fc1_stage = 0
     fc2_stage = 0
 
-    sram1_idx_gb = [0, 0, 0, 0, 0]
-    sram2_idx_gb = [0, 0, 0, 0, 0]
-    array_idx_gb = [0, 0, 0, 0, 0]
+    sram1_idx_gb = [0] * 7
+    sram2_idx_gb = [0] * 7
+    array_idx_gb = [0] * 7
     # array idx for transferring array data into LN 
     array_idx_ln = [0]
     # softmax is now processing which row
@@ -653,8 +686,8 @@ def simulating(args):
     gb_idx_softmax_end = [0]
 
     # used only when core_num is 5, for recording which block of a matrix is transferring from array to GB/core SRAM
-    a_row_idx = [0, 0]
-    a_col_idx = [0, 0]
+    a_row_idx = [0] * 2
+    a_col_idx = [0] * 2
 
     counter = 0
 
@@ -803,7 +836,7 @@ def simulating(args):
                 cores[0].sram1.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_a, 
                                             subsum_cnt=subsum_cnt_a, blocknum_row_sram=blocknum_row_sram1_a)
                 cores[0].sram2.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_a,
-                                            block_col=args.MAC_lane, subsum_cnt=subsum_cnt_a)
+                                            block_col=args.MAC_lane, subsum_cnt=subsum_cnt_a, blocknum_col_sram=blocknum_col_sram2_a)
                 cores[0].calculator_and_array.add_mapping(subsum_cnt=subsum_cnt_a) 
                 cores[0].dump_mappings("Q*K")
                 stage = 7     
@@ -814,7 +847,7 @@ def simulating(args):
                 cores[0].sram1.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_subx,
                                             subsum_cnt=subsum_cnt_subx, blocknum_row_sram=blocknum_row_sram1_subx)
                 cores[0].sram2.add_mapping(blocknum_row=blocknum_row, blocknum_col=blocknum_col_subx,
-                                            block_col=args.MAC_lane, subsum_cnt=subsum_cnt_subx)
+                                            block_col=args.MAC_lane, subsum_cnt=subsum_cnt_subx, blocknum_col_sram=blocknum_col_sram2_subx)
                 cores[0].calculator_and_array.add_mapping(subsum_cnt=subsum_cnt_subx)
                 cores[0].dump_mappings("A'*V")
                 stage = 10  
@@ -860,6 +893,18 @@ def simulating(args):
                     if global_buffers[4].sram1_complete2 == False:
                         # Read A' data from GB to core sram1 for A' * V calculation
                         coresram1_gb_data_transfer_a(cores, global_buffers, 4, 4, sram1_idx_gb)   
+                        
+            if (fc1_stage == 0) or (fc1_stage == 1):
+                if global_buffers[5].sram2_complete2 == False:
+                    # Transfer Weight Matrix for FC1 calculation
+                    # TODO
+                    coresram2_gb_data_transfer(cores, global_buffers, 5, 5, sram2_idx_gb)
+                    
+            if (fc2_stage == 0) or (fc2_stage == 1):
+                if global_buffers[5].sram2_complete2 == False:
+                    # Transfer Weight Matrix for FC2 calculation
+                    # TODO
+                    coresram2_gb_data_transfer(cores, global_buffers, 6, 6, sram2_idx_gb)
 
 
             """ Data transfer to softmax and transfer back to GB/core SRAM """
@@ -888,7 +933,7 @@ def simulating(args):
                 corearray_layernorm_data_transfer(cores, layernorm, 4, array_idx_ln, args.MAC_lane, head_embedding_dim)
 
             if cores[5].sram1.write_complete == False: 
-                # Transfer X data for FC calculation, the transfer process may be blocked by the first FC calculation
+                # Transfer X data for FC1 calculation, the transfer process may be blocked by the FC1 calculation
                 layernorm_coresram1_data_transfer(cores, layernorm, 5, 4)
 
 
@@ -908,18 +953,17 @@ def simulating(args):
                     # Read V from core1 to core4 sram2 for A' * V calculation
                     # print("VVVVVVVVVVVVVVVVVVVVVVVVVVVVVV")
                     corearray_coresram_data_transfer(cores, 2, 4, array_idx_gb, args.MAC_lane, 2, "V")
-            
-            # if (qkv_stage == 2) and (fc1_stage == -1):
-            #     if cores[3].sram1.write_complete and cores[3].sram2.write_complete:
-            #         # core1 finishes its duty of calculating Q, transfer for calculating FC1 
-            #         cores[0].sram1.add_mapping(blocknum_row, blocknum_col_fc1, subsum_cnt_fc1, blocknum_row_sram1_fc1)
-            #         # TODO
-            #         # cores[0].sram2.add_mapping()
-            #         cores[0].caculator_and_array.add_mapping(subsum_cnt_fc1)
-            #         cores[0].reconfigure(blocknum_row * blocknum_col_fc1)
-            #         cores[0].reset()
-            #         fc1_stage = 0
-
+                    
+            if (fc1_stage == 0) or (fc1_stage == 1) or (fc2_stage == 0) or (fc2_stage == 1):
+                if cores[6].sram1.write_complete == False:
+                    if cores[5].calculator_and_array.block_counter_rm <= blocknum_row_sram1_fc2 * blocknum_col_fc1:
+                        # Read result matrix from core5(FC1) to core6(FC2) for FC2 calculation
+                        corearray_coresram_data_transfer(cores, 5, 6, array_idx_gb, args.MAC_lane, 1, "FC1")
+                    else:
+                        # Read result matrix from core5(FC1) to core6(FC2)'s global buffer, since core6's SRAM is running out of capacity
+                        # TODO
+                    
+                    
 
             """ Q/K/V Calculation """
             if (qkv_stage == 0):
@@ -962,28 +1006,32 @@ def simulating(args):
 
             """ FC1 calculation """
             if (fc1_stage == 0):
-                #TODO
-                pass
+                """ Read data from core SRAM """
+                fc1_stage = read_from_core_sram(cores, fc1_stage, 5)
             elif (fc1_stage == 1):
-                #TODO
-                pass
+                """ Dot production """
+                fc1_stage = dot_production(cores, fc1_stage, count, 5, args.core_num)
+
 
             """ FC2 calculation """
             if (fc2_stage == 0):
-                #TODO
-                pass
+                """ Read data from core SRAM """
+                fc2_stage = read_from_core_sram(cores, fc2_stage, 6)
             elif (fc2_stage == 1):
-                #TODO
-                pass
+                """ Dot production """
+                fc2_stage = dot_production(cores, fc2_stage, count, 6, args.core_num)
 
 
             """ For debug """
             # if latency > 22000:
-            # if counter == 1000:
-            dump_all(cores, global_buffers, softmax, layernorm, stage, latency, args.core_num)
-            #     counter = 0
+            if counter == 10:
+                dump_all(cores, global_buffers, softmax, layernorm, stage, latency, args.core_num)
+                counter = 0
 
-            if layernorm[0].row_idx > 5:
+            # if layernorm[0].row_idx > 5:
+            # if fc2_stage == 2:
+            # if cores[5].blocknum_cal[0] == 2:
+            if latency > 240000:
                 stop = True
                 dump_all(cores, global_buffers, softmax, layernorm, stage, latency, args.core_num)
                 print("qkv_stage: " + str(qkv_stage))

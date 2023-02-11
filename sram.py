@@ -43,7 +43,7 @@ class SRAM(BaseUnit):
     def dump_state_matrix(self, sram, mode):
         print(str(sram) + ":")
         if sram == "SRAM1":
-            if (mode == "Q") or (mode == "K") or (mode == "V") or (mode == "FC1"): 
+            if (mode == "Q") or (mode == "K") or (mode == "V") or (mode == "FC1") or (mode == "FC2"): 
                 print(self.sram_state_matrix[:32])
                 print(self.sram_state_matrix[32:64])
                 print(self.sram_state_matrix[64:96])
@@ -77,7 +77,7 @@ class SRAM(BaseUnit):
                 print(self.sram_state_matrix[120:128])
 
         else:
-            if (mode == "Q") or (mode == "K") or (mode == "V"): 
+            if (mode == "Q") or (mode == "K") or (mode == "V") or (mode == "FC1"): 
                 print("0")
                 print(self.sram_state_matrix[:64])
                 print("1")
@@ -105,7 +105,15 @@ class SRAM(BaseUnit):
                 print("last")
                 print(self.sram_state_matrix[640:704])
                 print(self.sram_state_matrix[704:768])
-
+            elif mode == "FC2":
+                print("0")
+                print(self.sram_state_matrix[:16])
+                print("1")
+                print(self.sram_state_matrix[16:32])
+                print("126")
+                print(self.sram_state_matrix[2016:2032])
+                print("127")
+                print(self.sram_state_matrix[2032:2048])
 
     def update_to_ready(self, idx):
         self.sram_state_matrix[idx] = utils.READY
@@ -166,8 +174,6 @@ class SRAM1(SRAM):
         blocknum_col_std: number of mac_lane * mac_lane blocks in the column of result matrix
         subsum_cnt_std: number of subsums accumulated to complete the calculation of a mac_lane * mac_lane block
         blocknum_row_sram_std: number of rows of mac_lane * mac_lane blocks simultaneously stores in sub-SRAM
-
-        flag: determine whether the state matrix should be initialized or kept
 
         """
 
@@ -261,17 +267,14 @@ class SRAM1(SRAM):
         self.subsum_cnt_idx_cal = 0
         super().reset()
 
-
 class SRAM2(SRAM):
     """ 
     Core SRAM2
 
     block_col_idx_cal: indicating which col in the block is now calculating, < mac_lane
     subsum_cnt_idx_cal: indicating which subsum in the SRAM is now calculating
-
-    block_col_idx_rm: indicating which col in the block is now removing, < mac_lane
-    subsum_cnt_idx_rm: indicating which subsum in the SRAM is now removing
-    blocknum_col_idx_rm: indicating which col in the result matrix is now removing
+    
+    blocknum_col_sram_idx_cal: record which mac_lane column in the SRAM is now calculating, < self.blocknum_col_sram_std
     """
 
     def __init__(self, latency_count, num, height, width):
@@ -279,6 +282,7 @@ class SRAM2(SRAM):
     
         self.block_col_idx_cal = 0
         self.subsum_cnt_idx_cal = 0
+        self.blocknum_col_sram_idx_cal = 0
 
         # self.block_col_idx_rm = 0
         # self.subsum_cnt_idx_rm = 0
@@ -297,13 +301,13 @@ class SRAM2(SRAM):
     def dump_mappings(self):
         print("| + number of mac_lane rows in the result matrix: " + str(self.blocknum_row_std))
         print("| + number of mac_lane columns in the result matrix: " + str(self.blocknum_col_std))
-        print("| + logic state matrix size: [" + str(self.subsum_cnt_std) + ", " + str(self.logic_sram_col_cnt_std) + "]")
+        print("| + logic state matrix size: [" + str(self.subsum_cnt_std) + ", " + str(self.logic_sram_col_cnt_std) + "/" + str(self.blocknum_col_sram_std) + "*" + str(self.block_col_std) + "]")
         print("| + mac lane: " + str(self.block_col_std))
 
     def dump_ready(self, blocknum_col_cal):
         print("SRAM2 ready status, check state matrix idx: " + str(self.subsum_cnt_idx_cal * self.logic_sram_col_cnt_std + blocknum_col_cal * self.block_col_std + self.block_col_idx_cal)) 
 
-    def add_mapping(self, blocknum_row, blocknum_col, block_col, subsum_cnt):
+    def add_mapping(self, blocknum_row, blocknum_col, block_col, subsum_cnt, blocknum_col_sram):
         """ 
         Formulate mapping strategy
 
@@ -311,6 +315,9 @@ class SRAM2(SRAM):
         blocknum_col_std: number of mac_lane * mac_lane blocks in the col of result matrix
         blocknum_row_std: number of mac_lane * mac_lane blocks in the row of result matrix
         subsum_cnt_std: number of subsums accumulated to complete the calculation of a mac_lane * mac_lane block
+        blocknum_col_sram: number of mac_lane columns can be stored in SRAM2 at the same time
+                           4 when row number is 1024
+                           NOTE: this parameter will only be used when the core is assigned for FC calculation 
 
         sram_state_matrix: record states of data in the SRAM
                            three states: READY/REMOVE/REMOVING
@@ -319,16 +326,26 @@ class SRAM2(SRAM):
         """
 
         self.block_col_std = block_col
-        self.blocknum_col_std = blocknum_col
+        self.blocknum_col_std = blocknum_col  # number of column(mac_lane*mac_lane block) in Weight matrix
         self.blocknum_row_std = blocknum_row
         self.subsum_cnt_std = subsum_cnt  #32
         self.logic_sram_col_cnt_std = block_col * blocknum_col #64
+        self.blocknum_col_sram_std = blocknum_col_sram  # number of column(mac_lane*mac_lane block) can be stored in SRAM2
 
     def ready(self, blocknum_col_cal):
-        return (self.sram_state_matrix[self.subsum_cnt_idx_cal * self.logic_sram_col_cnt_std + blocknum_col_cal * self.block_col_std + self.block_col_idx_cal] == utils.READY)
-
+        if self.blocknum_col_std <= self.blocknum_col_sram_std:
+            # all matrix data can be stored in SRAM at the same time
+            return (self.sram_state_matrix[self.subsum_cnt_idx_cal * self.logic_sram_col_cnt_std + blocknum_col_cal * self.block_col_std + self.block_col_idx_cal] == utils.READY)
+        else:
+            # not all matrix data can be stored in SRAM at the same time
+            return (self.sram_state_matrix[self.subsum_cnt_idx_cal * self.blocknum_col_sram_std * self.block_col_std + (blocknum_col_cal % self.blocknum_col_sram_std) * self.block_col_std + self.block_col_idx_cal] == utils.READY)
+            
     def update_to_remove(self, blocknum_col, block_col_idx_cal):
-        self.sram_state_matrix[self.subsum_cnt_idx_cal * self.logic_sram_col_cnt_std + blocknum_col * self.block_col_std + block_col_idx_cal] = utils.REMOVE
+        if self.blocknum_col_std <= self.blocknum_col_sram_std:
+            col_cnt = self.logic_sram_col_cnt_std
+        else:
+            col_cnt = self.blocknum_col_sram_std * self.block_col_std
+        self.sram_state_matrix[self.subsum_cnt_idx_cal * col_cnt + blocknum_col * self.block_col_std + block_col_idx_cal] = utils.REMOVE
 
     def update_to_ready_from_array(self, blocknum_col, array_block_cnt_std, matrix):
         """ 
@@ -364,41 +381,84 @@ class SRAM2(SRAM):
         # print("blocknum_cal: " + str(blocknum_cal))
         # print("self.blocknum_col_std: " + str(self.blocknum_col_std))
         if self.cal_complete == False:
-            # calculation of mac_lane width is not completed
-            if (self.block_col_idx_cal + 1) < self.block_col_std:
-                if blocknum_cal[0] == self.blocknum_row_std - 1:
-                    # if it is the last round of calculation, we can set the data state as ROMOVE
+        # calculation of mac_lane width is not completed
+            if self.blocknum_col_sram_std >= self.blocknum_col_std:
+            # if SRAM2 can hold all matrix data
+                if (self.block_col_idx_cal + 1) < self.block_col_std:
+                    if blocknum_cal[0] == self.blocknum_row_std - 1:
+                        # if it is the last round of calculation, we can set the data state as ROMOVE
+                        self.update_to_remove(blocknum_cal[1], self.block_col_idx_cal)
+                    self.block_col_idx_cal += 1
+                # calculation of mac_lane width completes, but the calculation of a block doesn't
+                elif (self.subsum_cnt_idx_cal + 1) < self.subsum_cnt_std:
+                    if blocknum_cal[0] == self.blocknum_row_std - 1:
+                        self.update_to_remove(blocknum_cal[1], self.block_col_idx_cal)
+                    self.block_col_idx_cal = 0
+                    self.subsum_cnt_idx_cal += 1
+                    is_sram1_advance = True
+                # calculation of a block completes, but the calculation of a mac_lane row doesn't
+                elif (blocknum_cal[1] + 1) < self.blocknum_col_std:
+                    if blocknum_cal[0] == self.blocknum_row_std - 1:
+                        self.update_to_remove(blocknum_cal[1], self.block_col_idx_cal)
+                    blocknum_cal[1] += 1
+                    self.block_col_idx_cal = 0
+                    self.subsum_cnt_idx_cal = 0
+                    is_sram1_advance = True
+                # calculation of a mac_lane row completes, but the whole calculation doesn't
+                elif (blocknum_cal[0] + 1) < self.blocknum_row_std:
+                    # if blocknum_cal[0] == self.blocknum_row_std - 1:
+                    #     self.update_to_remove(blocknum_cal[1], self.block_col_idx_cal + 1)
+                    blocknum_cal[1] = 0
+                    blocknum_cal[0] += 1
+                    self.block_col_idx_cal = 0
+                    self.subsum_cnt_idx_cal = 0
+                    is_sram1_advance = True
+                else:
+                    # update the data of last column and last row to REMOVE
                     self.update_to_remove(blocknum_cal[1], self.block_col_idx_cal)
-                self.block_col_idx_cal += 1
-            # calculation of mac_lane width completes, but the calculation of a block doesn't
-            elif (self.subsum_cnt_idx_cal + 1) < self.subsum_cnt_std:
-                if blocknum_cal[0] == self.blocknum_row_std - 1:
-                    self.update_to_remove(blocknum_cal[1], self.block_col_idx_cal)
-                self.block_col_idx_cal = 0
-                self.subsum_cnt_idx_cal += 1
-                is_sram1_advance = True
-            # calculation of a block completes, but the calculation of a mac_lane row doesn't
-            elif (blocknum_cal[1] + 1) < self.blocknum_col_std:
-                if blocknum_cal[0] == self.blocknum_row_std - 1:
-                    self.update_to_remove(blocknum_cal[1], self.block_col_idx_cal)
-                blocknum_cal[1] += 1
-                self.block_col_idx_cal = 0
-                self.subsum_cnt_idx_cal = 0
-                is_sram1_advance = True
-            # calculation of a mac_lane row completes, but the whole calculation doesn't
-            elif (blocknum_cal[0] + 1) < self.blocknum_row_std:
-                # if blocknum_cal[0] == self.blocknum_row_std - 1:
-                #     self.update_to_remove(blocknum_cal[1], self.block_col_idx_cal + 1)
-                blocknum_cal[1] = 0
-                blocknum_cal[0] += 1
-                self.block_col_idx_cal = 0
-                self.subsum_cnt_idx_cal = 0
-                is_sram1_advance = True
+                    self.cal_complete = True
+                    is_sram1_advance = True
             else:
-                # update the data of last column and last row to REMOVE
-                self.update_to_remove(blocknum_cal[1], self.block_col_idx_cal)
-                self.cal_complete = True
-                is_sram1_advance = True
+            # if SRAM2 cannot hold all matrix data
+                # calculation of a mac_lane*mac_lane block's subsum not complete
+                if (self.block_col_idx_cal + 1) < self.block_col_std:
+                    self.update_to_remove(self.blocknum_col_sram_idx_cal, self.block_col_idx_cal)
+                    self.block_col_idx_cal += 1
+                # calculation of a mac_lane*mac_lane block's subsum completes, but the block not
+                elif (self.subsum_cnt_idx_cal + 1) < self.subsum_cnt_std:
+                    self.update_to_remove(self.blocknum_col_sram_idx_cal, self.block_col_idx_cal)
+                    self.block_col_idx_cal = 0
+                    self.subsum_cnt_idx_cal += 1
+                    is_sram1_advance = True
+                # calculation of a mac_lane*mac_lane block completes, but a "sram row" not
+                elif ((self.blocknum_col_sram_idx_cal + 1) < self.blocknum_col_sram_std) and ((blocknum_cal[1] + 1) < self.blocknum_col_std):
+                    self.update_to_remove(self.blocknum_col_sram_idx_cal, self.block_col_idx_cal)
+                    blocknum_cal[1] += 1
+                    self.blocknum_col_sram_idx_cal += 1
+                    self.block_col_idx_cal = 0
+                    self.subsum_cnt_idx_cal = 0
+                    is_sram1_advance = True
+                # calculation of a "sram row" completes, but a "real row" not
+                elif (blocknum_cal[1] + 1) < self.blocknum_col_std:
+                    self.update_to_remove(self.blocknum_col_sram_idx_cal, self.block_col_idx_cal)
+                    blocknum_cal[1] += 1
+                    self.blocknum_col_sram_idx_cal = 0
+                    self.block_col_idx_cal = 0
+                    self.subsum_cnt_idx_cal = 0
+                    is_sram1_advance = True
+                # calculation of a "real row" completes, but the whole calculation doesn't
+                elif (blocknum_cal[0] + 1) < self.blocknum_row_std:
+                    self.update_to_remove(self.blocknum_col_sram_idx_cal, self.block_col_idx_cal)
+                    blocknum_cal[1] = 0
+                    self.blocknum_col_sram_idx_cal = 0
+                    blocknum_cal[0] += 1
+                    self.block_col_idx_cal = 0
+                    self.subsum_cnt_idx_cal = 0
+                    is_sram1_advance = True
+                else:
+                    self.update_to_remove(self.blocknum_col_sram_idx_cal, self.block_col_idx_cal)
+                    self.cal_complete = True
+                    is_sram1_advance = True
 
         return is_sram1_advance
 
