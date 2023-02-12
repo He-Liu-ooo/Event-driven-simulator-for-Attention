@@ -111,6 +111,12 @@ class CalculatorAndArray(BaseUnit):
         else:
             self.array_idx_rm = 0
             self.block_counter_rm += 1
+            
+    def array_idx_rm_advance_fc1(self, array_idx_rm):
+        if array_idx_rm + 1 < self.mac_lane:
+            pass
+        else:
+            self.block_counter_rm += 1
 
     def find_array_target(self, mode):
         """ 

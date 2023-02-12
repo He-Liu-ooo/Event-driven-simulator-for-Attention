@@ -74,9 +74,6 @@ def read_from_core_sram(cores, stage, idx, flag=False):
     stage = stage
     if cores[idx].sram2.cal_complete == False:
         # if we can read SRAM and accumulating buffer is ready for result data
-        # if flag:
-        #     cores[idx].sram1.dump_ready()
-        #     cores[idx].sram2.dump_ready(cores[idx].blocknum_cal[1])
         if cores[idx].sram_ready() & cores[idx].calculator_and_array.ready():
             cores[idx].sram2.latency_counter += 1
         # if data is ready for calculation
@@ -111,10 +108,16 @@ def dot_production(cores, stage, count, idx, core_num=1):
             count[0] += 1
     return stage
 
-def coresram1_gb_data_transfer(cores, global_buffers, core_idx, gb_idx, sram1_idx_gb):
+def coresram1_gb_data_transfer(cores, global_buffers, core_idx, gb_idx, sram1_idx_gb, mac_lane=0, core_num=0):
     # if global buffer can update SRAM data now
     if global_buffers[gb_idx].sram1_busy == False:
-        sram1_idx_gb[gb_idx] = global_buffers[gb_idx].find_sram_target(cores[core_idx].sram1.sram_state_matrix, cores[core_idx].calculator_and_array.mac_lane, 1)
+        if (core_num == 5) and (gb_idx == 6):
+            # if this is the data transfer from global_buffer6 into FC2's core SRAM1
+            # besides checking whether FC2's core SRAM1 has a vacancy for holding data, we alos need to check whether GB6 already has FC1's result matrix data
+            sram1_idx_gb[gb_idx] = global_buffers[gb_idx].find_sram1_target_with_fc1_check(cores[core_idx].sram1.sram_state_matrix, cores[core_idx].calculator_and_array.mac_lane)
+        else:
+            sram1_idx_gb[gb_idx] = global_buffers[gb_idx].find_sram_target(cores[core_idx].sram1.sram_state_matrix, cores[core_idx].calculator_and_array.mac_lane, 1)
+            
         # if global buffer actually removes a data
         if global_buffers[gb_idx].sram1_busy:
             cores[core_idx].sram1.update_to_removing(sram1_idx_gb[gb_idx])
@@ -127,6 +130,9 @@ def coresram1_gb_data_transfer(cores, global_buffers, core_idx, gb_idx, sram1_id
             global_buffers[gb_idx].sram1_busy = False
             global_buffers[gb_idx].sram1_complete2 = global_buffers[gb_idx].sram1_complete1
             cores[core_idx].sram1.update_to_ready(sram1_idx_gb[gb_idx])
+            if gb_idx == 6:
+                if global_buffers[6].fc1_result_matrix_write_complete(sram1_idx_gb[gb_idx], mac_lane):
+                    cores[core_idx].sram1.write_complete = True
 
 def coresram1_gb_data_transfer_a(cores, global_buffers, core_idx, gb_idx, sram1_idx_gb):
     """ A' matrix data transfer from GB3 to core SRAM1 """
@@ -167,8 +173,14 @@ def corearray_gb_data_transfer(cores, global_buffers, core_idx, gb_idx, array_id
         # if there is data in array satisfies the condition to remove
         if global_buffers[gb_idx].array_busy:
             cores[core_idx].calculator_and_array.update_to_removing(array_idx_gb[gb_idx])
+            if gb_idx == 6:
+                # if this is the case that transferring remaining FC1 results into FC2's core SRAM1, we need to keep up FC1 core's block_counter_rm
+                cores[core_idx].calculator_and_array.array_idx_rm_advance_fc1(array_idx_gb[gb_idx])
     else: 
         global_buffers[gb_idx].array_latency_counter += 1
+        # if gb_idx == 6:
+            # print("global_buffers[gb_idx].array_latency_counter: " + str(global_buffers[gb_idx].array_latency_counter))
+            # print("array_idx_gb[gb_idx]: " +str(array_idx_gb[gb_idx]))
         if global_buffers[gb_idx].array_latency_counter == global_buffers[gb_idx].latency_count:
             global_buffers[gb_idx].array_latency_counter = 0
             global_buffers[gb_idx].array_busy = False
@@ -193,6 +205,11 @@ def corearray_gb_data_transfer(cores, global_buffers, core_idx, gb_idx, array_id
                             global_buffers[gb_idx].update_to_a1(global_buffers[3].array_data_cnt)
                         else:
                             global_buffers[gb_idx].update_to_a2(a_row_idx[0], a_col_idx[0])
+                if gb_idx == 6:
+                # case that FC1 core is transferring remaining FC1 result matrix to FC2's GB
+                    if array_idx_gb[gb_idx] == (mac_lane - 1):
+                        # result block written into GB6 increments
+                        global_buffers[gb_idx].fc1_blocknum_counter = cores[core_idx].calculator_and_array.block_counter_rm
             
     if (gb_idx == 3) & (cores[core_idx].calculator_and_array.block_counter_cal == global_buffers[3].array_data_cnt):
         flag[0] = 1
@@ -234,14 +251,11 @@ def corearray_coresram_data_transfer(cores, prev_core_idx, nxt_core_idx, array_i
     assert((sram == 1) or (sram == 2))
 
     if cores[prev_core_idx].calculator_and_array.array_sram_busy == False:   
-        # print("prev_core_idx: " + str(prev_core_idx))            
         array_idx_gb[prev_core_idx] = cores[prev_core_idx].calculator_and_array.find_array_target("sram")
         if cores[prev_core_idx].calculator_and_array.array_sram_busy:
             cores[prev_core_idx].calculator_and_array.update_to_removing(array_idx_gb[prev_core_idx])
     else:
         cores[prev_core_idx].calculator_and_array.sram_latency_counter += 1
-        # print("cal.sram_latency_counter: " + str(cores[prev_core_idx].calculator_and_array.sram_latency_counter))
-        # print("array_idx_gb[prev_core_idx]: " + str(array_idx_gb[prev_core_idx]))
         if cores[prev_core_idx].calculator_and_array.sram_latency_counter == cores[nxt_core_idx].sram1.latency_count:
             cores[prev_core_idx].calculator_and_array.sram_latency_counter = 0
             cores[prev_core_idx].calculator_and_array.array_sram_busy = False
@@ -262,7 +276,6 @@ def corearray_coresram_data_transfer(cores, prev_core_idx, nxt_core_idx, array_i
                             cores[nxt_core_idx].sram2.update_to_ready_from_array(cores[prev_core_idx].sram2.blocknum_col_std, cores[prev_core_idx].calculator_and_array.block_cnt, matrix)
                     elif matrix == "V":
                         if (((cores[nxt_core_idx].sram2.array_block_counter - 1) // int(cores[nxt_core_idx].sram2.logic_sram_col_cnt_std // cores[nxt_core_idx].calculator_and_array.mac_lane)) % 2 == 1):
-                            # print("write V in SRAM2, array_block_counter: " + str(cores[nxt_core_idx].sram2.array_block_counter))
                             cores[nxt_core_idx].sram2.update_to_ready_from_array(cores[prev_core_idx].sram2.blocknum_col_std, cores[prev_core_idx].calculator_and_array.block_cnt, matrix)
                     else:
                         assert(0)
@@ -270,7 +283,6 @@ def corearray_coresram_data_transfer(cores, prev_core_idx, nxt_core_idx, array_i
 def gb_softmax_data_transfer(global_buffers, softmax, idx, gb_idx_softmax_start, gb_idx_softmax_end):
     if (global_buffers[idx].softmax_busy == False) and (softmax[0].busy == False):
         (gb_idx_softmax_start[0], gb_idx_softmax_end[0]) = global_buffers[idx].find_softmax_null_target()
-        # print("gb_idx_softmax: [" + str(gb_idx_softmax_start[0]) + ", " + str(gb_idx_softmax_end[0]) + "]")
     elif (global_buffers[idx].softmax_busy == True) and (softmax[0].busy == False):
         global_buffers[idx].softmax_latency_counter += 1
         if global_buffers[idx].softmax_latency_counter == global_buffers[idx].latency_count:
@@ -531,7 +543,7 @@ def simulating(args):
         global_buffers.append(GlobalBuffer(args.GB_access_latency))
         global_buffers[4].rownum1 = 2
         
-        for i in range(2):
+        for i in range(3):
             global_buffers.append(GlobalBuffer(args.GB_access_latency))
 
         if args.seq_length <= int(math.sqrt(args.SRAM_capacity)):
@@ -636,10 +648,13 @@ def simulating(args):
                                     sram2_colnum_cnt=4 * args.embedding_dim, sram2_sram_colnum_cnt=blocknum_col_sram2_fc1 * args.MAC_lane)
     global_buffers[5].dump_mappings("FC1")
     
-    global_buffers[6].add_mapping(blocknum_row_cnt=blocknum_row, array_data_cnt=blocknum_row * blocknum_col_fc2, 
-                                  sram_subsum_cnt=subsum_cnt_fc2, sram1_rownum_cnt=blocknum_row_sram1_fc2, 
-                                  sram2_colnum_cnt=args.embedding_dim, sram2_sram_colnum_cnt=blocknum_col_sram2_fc2 * args.MAC_lane)
-    global_buffers[6].dump_mappings("FC2")
+    for i in range(6,8):
+        global_buffers[i].add_mapping(blocknum_row_cnt=blocknum_row, array_data_cnt=blocknum_row * blocknum_col_fc2, 
+                                    sram_subsum_cnt=subsum_cnt_fc2, sram1_rownum_cnt=blocknum_row_sram1_fc2, 
+                                    sram2_colnum_cnt=args.embedding_dim, sram2_sram_colnum_cnt=blocknum_col_sram2_fc2 * args.MAC_lane)
+    
+    # since FC2's SRAM1 is already hold a sub-SRAM of data from FC1's core directly, this gb-sram transfer is the second time
+    global_buffers[6].rownum1 = 2
 
 
     """ 
@@ -678,7 +693,7 @@ def simulating(args):
 
     sram1_idx_gb = [0] * 7
     sram2_idx_gb = [0] * 7
-    array_idx_gb = [0] * 7
+    array_idx_gb = [0] * 8
     # array idx for transferring array data into LN 
     array_idx_ln = [0]
     # softmax is now processing which row
@@ -896,16 +911,22 @@ def simulating(args):
                         
             if (fc1_stage == 0) or (fc1_stage == 1):
                 if global_buffers[5].sram2_complete2 == False:
-                    # Transfer Weight Matrix for FC1 calculation
-                    # TODO
+                    # Transfer Weight Matrix from GB to core5 for FC1 calculation
                     coresram2_gb_data_transfer(cores, global_buffers, 5, 5, sram2_idx_gb)
                     
             if (fc2_stage == 0) or (fc2_stage == 1):
-                if global_buffers[5].sram2_complete2 == False:
+                if global_buffers[6].sram1_complete2 == False:
+                    # Transfer remaining X_FC2 from GB to core6 for FC2 calculation
+                    coresram1_gb_data_transfer(cores, global_buffers, 6, 6, sram1_idx_gb, args.MAC_lane, args.core_num)
+                if global_buffers[6].sram2_complete2 == False:
                     # Transfer Weight Matrix for FC2 calculation
-                    # TODO
                     coresram2_gb_data_transfer(cores, global_buffers, 6, 6, sram2_idx_gb)
-
+            
+            if (fc2_stage == 0) or (fc2_stage == 1) or (fc2_stage == 2):
+                # Transfer FC2's result matrix from core array into GB
+                if global_buffers[7].array_complete2 == False:
+                    corearray_gb_data_transfer(cores, global_buffers, 6, 7, array_idx_gb, 7, args.MAC_lane, flag, a_row_idx, a_col_idx, args.core_num)
+                
 
             """ Data transfer to softmax and transfer back to GB/core SRAM """
             if global_buffers[3].transfer_to_softmax_complete() == False: 
@@ -917,8 +938,6 @@ def simulating(args):
                     softmax_coresram1_data_transfer(global_buffers, softmax, cores, 3, 4, gb_idx_softmax_start, gb_idx_softmax_end)
                 else:
                     if global_buffers[3].a_row < (cores[4].sram1.height // cores[4].sram1.subsum_cnt_std):
-                        # print("a_row: " + str(global_buffers[3].a_row))
-                        # print("limit: " + str(cores[4].sram1.height // cores[4].sram1.subsum_cnt_std))
                         # if core SRAM still has vacancy for A', transfer A' data from softmax to core SRAM1
                         softmax_coresram1_data_transfer(global_buffers, softmax, cores, 3, 4, gb_idx_softmax_start, gb_idx_softmax_end)
                     else:
@@ -934,6 +953,7 @@ def simulating(args):
 
             if cores[5].sram1.write_complete == False: 
                 # Transfer X data for FC1 calculation, the transfer process may be blocked by the FC1 calculation
+                # NOTE: this means when FC1 SRAM is not empty, it won't receive data from LN, therefore there's no need to design a backup GB for FC1 SRAM1
                 layernorm_coresram1_data_transfer(cores, layernorm, 5, 4)
 
 
@@ -941,29 +961,30 @@ def simulating(args):
             if (qkv_stage == 0) or (qkv_stage == 1) or (a_stage == 0) or (a_stage == 1):
                 if cores[3].sram1.write_complete == False:
                     # Read Q from core0 to core3 sram1 for Q * K calculation
-                    # print("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ")
                     corearray_coresram_data_transfer(cores, 0, 3, array_idx_gb, args.MAC_lane, 1, "Q")
                 
                 if cores[3].sram2.write_complete == False:
                     # Read K from core1 to core3 sram2 for Q * K calculation
-                    # print("KKKKKKKKKKKKKKKKKKKKKKKKKKKKKK")
                     corearray_coresram_data_transfer(cores, 1, 3, array_idx_gb, args.MAC_lane, 2, "K")
  
                 if cores[4].sram2.write_complete == False:
                     # Read V from core1 to core4 sram2 for A' * V calculation
-                    # print("VVVVVVVVVVVVVVVVVVVVVVVVVVVVVV")
                     corearray_coresram_data_transfer(cores, 2, 4, array_idx_gb, args.MAC_lane, 2, "V")
                     
             if (fc1_stage == 0) or (fc1_stage == 1) or (fc2_stage == 0) or (fc2_stage == 1):
                 if cores[6].sram1.write_complete == False:
-                    if cores[5].calculator_and_array.block_counter_rm <= blocknum_row_sram1_fc2 * blocknum_col_fc1:
+                    if cores[5].calculator_and_array.block_counter_rm < blocknum_row_sram1_fc2 * blocknum_col_fc1:
                         # Read result matrix from core5(FC1) to core6(FC2) for FC2 calculation
+                        corearray_coresram_data_transfer(cores, 5, 6, array_idx_gb, args.MAC_lane, 1, "FC1")
+                    # elif (cores[5].calculator_and_array.block_counter_rm == blocknum_row_sram1_fc2 * blocknum_col_fc1) and (cores[5].calculator_and_array.array_state_matrix[-1] == utils.REMOVING) \
+                    #     and (cores[5].calculator_and_array.block_counter_cal <= (blocknum_row_sram1_fc2 * blocknum_col_fc1)):
+                    elif (cores[5].calculator_and_array.block_counter_rm == blocknum_row_sram1_fc2 * blocknum_col_fc1) and (cores[5].calculator_and_array.array_state_matrix[-1] == utils.REMOVING): 
+                        # make sure the last data of last block(that can be written directly into core's SRAM1) is successfully transferred
                         corearray_coresram_data_transfer(cores, 5, 6, array_idx_gb, args.MAC_lane, 1, "FC1")
                     else:
                         # Read result matrix from core5(FC1) to core6(FC2)'s global buffer, since core6's SRAM is running out of capacity
-                        # TODO
-                    
-                    
+                        corearray_gb_data_transfer(cores, global_buffers, 5, 6, array_idx_gb, 7, args.MAC_lane, flag, a_row_idx, a_col_idx, args.core_num)
+                                         
 
             """ Q/K/V Calculation """
             if (qkv_stage == 0):
@@ -1024,14 +1045,15 @@ def simulating(args):
 
             """ For debug """
             # if latency > 22000:
-            if counter == 10:
+            # if (latency > 130145) and (latency < 132913):
+            if counter == 500000:
                 dump_all(cores, global_buffers, softmax, layernorm, stage, latency, args.core_num)
                 counter = 0
 
             # if layernorm[0].row_idx > 5:
             # if fc2_stage == 2:
             # if cores[5].blocknum_cal[0] == 2:
-            if latency > 240000:
+            if global_buffers[7].array_complete2:
                 stop = True
                 dump_all(cores, global_buffers, softmax, layernorm, stage, latency, args.core_num)
                 print("qkv_stage: " + str(qkv_stage))

@@ -26,6 +26,7 @@ class GlobalBuffer(BaseUnit):
 
     blocknum_row_cnt: number of mac_lane rows need to be replaced
     array_data_cnt: number of mac_lane data need to be replaced
+    fc1_blocknum_counter: record how many blocks ftom fc1 core has been written into GB
 
     sram1_complete1: indicates whether data update of SRAM1 is complete(True when the last data starts transferring)
     sram1_complete2: indicates whether data update of SRAM1 is complete(True when the last data finishes transferring)
@@ -64,6 +65,8 @@ class GlobalBuffer(BaseUnit):
 
         self.blocknum_row_cnt = 0
         self.array_data_cnt = 0
+        self.fc1_blocknum_counter = 0
+        
         self.sram1_complete1 = False
         self.sram1_complete2 = False
         self.sram2_complete1 = False
@@ -104,6 +107,8 @@ class GlobalBuffer(BaseUnit):
         print(" + Next transferring data from sram1: [" + str(self.row[0]) + ", " + str(self.col[0]) + "]")
         print(" + Next transferring data from sram2: [" + str(self.row[1]) + ", " + str(self.col[1]) + "]")
         print(" + Next transferring data from array: " + str(self.array_idx_rm))
+        if idx == "FC2":
+            print(" Received block number from FC1 core: " + str(self.fc1_blocknum_counter))
         print("---------------------------")
 
     def dump_a_state_matrix(self):
@@ -132,6 +137,7 @@ class GlobalBuffer(BaseUnit):
                           column number for sram2 logic state matrix
         sram2_sram_colnum_cnt: number of columns of data a SRAM2 can store at the same time
                                64 for row=1024 case and 16 for row=4096 case
+                               
         """
 
         self.blocknum_row_cnt = blocknum_row_cnt
@@ -140,6 +146,7 @@ class GlobalBuffer(BaseUnit):
         self.sram1_rownum_cnt = sram1_rownum_cnt
         self.sram2_colnum_cnt = sram2_colnum_cnt
         self.sram2_sram_colnum_cnt = sram2_sram_colnum_cnt
+        
 
         if flag:
             self.a_state_matrix = np.zeros((self.blocknum_row_cnt, int(self.array_data_cnt // self.blocknum_row_cnt)), dtype=int)
@@ -151,7 +158,6 @@ class GlobalBuffer(BaseUnit):
         if block_counter > 0:
             row = int((block_counter - 1) // self.a_state_matrix.shape[1])
             col = block_counter - 1 - row * self.a_state_matrix.shape[1]
-            # print("update_to_a: [" + str(row) + ", " + str(col) + "], block_counter: " + str(block_counter))
             self.a_state_matrix[row][col] = utils.A
     
     def update_to_a2(self, row, col):
@@ -211,15 +217,18 @@ class GlobalBuffer(BaseUnit):
                 self.row[1] = 0
                 self.colnum2 += 1
                 self.colnum2_sram += 1
+            # if a "sram row" completes, but a "real row" not
             elif (self.col[1] + self.colnum2  * mac_lane - self.sram2_sram_colnum_cnt + 1) < self.sram2_colnum_cnt:
                 self.col[1] = 0
                 self.colnum2_sram = 1
                 self.colnum2 += 1
                 self.row[1] = 0
+            # a "real row" completes, but whole not
+            # this means a new row's calculation begins
             elif (self.rownum2) + 1 < self.blocknum_row_cnt:
                 self.col[1] = 0
                 self.colnum2_sram = 1
-                self.colnum2 += 1
+                self.colnum2 = 1
                 self.row[1] = 0
                 self.rownum2 += 1
             else:
@@ -259,6 +268,8 @@ class GlobalBuffer(BaseUnit):
             else:
                 sram2_colnum_cnt_tmp = self.sram2_sram_colnum_cnt
 
+            # print("colnum2: " + str(self.colnum2))
+            # print("colnum2_sram: " + str(self.colnum2_sram))
             if sram_state_matrix[self.row[1] * sram2_colnum_cnt_tmp + self.col[1]] == utils.REMOVE:
                 # hit = True
                 # self.num_working += 1
@@ -271,6 +282,26 @@ class GlobalBuffer(BaseUnit):
         else:
             assert(0)
 
+        return idx
+    
+    def find_sram1_target_with_fc1_check(self, sram_state_matrix, mac_lane):
+        """ Check if the data of FC1 result matrix that is going to update FC2's core SRAM1 is ready """
+        row = 0
+        col = 0
+        idx = 0
+        # if for sram1 
+        if sram_state_matrix[self.row[0] * self.sram_subsum_cnt + self.col[0]] == utils.REMOVE:
+            # print("[row, col]: [" + str(self.row[0]) + ", " + str(self.col[0]) + "]")
+            # print("self.rownum1: " + str(self.rownum1))
+            # hit = True
+            row = self.row[0]
+            col = self.col[0]
+            idx = row * self.sram_subsum_cnt + col
+            if (((self.sram2_colnum_cnt * 4) // mac_lane) * self.sram1_rownum_cnt * (self.rownum1 - 1) + idx * 2) <= self.fc1_blocknum_counter:
+                self.sram1_busy = True
+                self.rowcol_advance1()
+        idx = row * self.sram_subsum_cnt + col
+        
         return idx
 
     def find_sram_target_a(self, sram_state_matrix, a_state_matrix, sram1_rownum_cnt):
@@ -299,12 +330,17 @@ class GlobalBuffer(BaseUnit):
         return idx
 
     def check_a(self, row, col, a_state_matrix, sram1_rownum_cnt):
-        # print("[row, col]: [" + str(row) + ", " + str(col) + "]")
-        # print("rownum1: " + str(self.rownum1))
-        # print("sram1_rownum_cnt: " + str(self.sram1_rownum_cnt))
         a_row = row + (self.rownum1 - 1) * sram1_rownum_cnt
         if (a_state_matrix[a_row][col * 2] == utils.A_SOFTMAX) and (a_state_matrix[a_row][col * 2 + 1] == utils.A_SOFTMAX):
             return True
+        return False
+                
+    def fc1_result_matrix_write_complete(self, sram1_idx, mac_lane):
+        """ Check whether all FC1 result matrix is written into FC2's core SRAM1 """ 
+        
+        if (((self.sram2_colnum_cnt * 4) // mac_lane) * self.sram1_rownum_cnt * (self.rownum1 - 1) + sram1_idx * 2) == self.blocknum_row_cnt * (self.sram2_colnum_cnt * 4 // mac_lane):
+            return True
+        
         return False
 
     def find_array_target(self, array_state_matrix):
@@ -323,7 +359,6 @@ class GlobalBuffer(BaseUnit):
 
         start = 0
         end = 0
-        # print("[self.softmax_start, self.softmax_end]: [" + str(self.softmax_start) + ", " + str(self.softmax_end) + "]")
         if self.a_row < self.blocknum_row_cnt:
             if self.softmax_end < (self.a_state_matrix.shape[1] - 1):
                 if (self.a_state_matrix[self.a_row][self.softmax_end] == utils.A):
