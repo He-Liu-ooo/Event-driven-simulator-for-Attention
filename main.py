@@ -76,6 +76,7 @@ def read_from_core_sram(cores, stage, idx, flag=False):
         # if we can read SRAM and accumulating buffer is ready for result data
         if cores[idx].sram_ready() & cores[idx].calculator_and_array.ready():
             cores[idx].sram2.latency_counter += 1
+            cores[idx].statistics.util_counter += 1
         # if data is ready for calculation
         if cores[idx].sram2.latency_counter == cores[idx].sram2.latency_count:
             cores[idx].sram2.latency_counter = 0
@@ -89,6 +90,7 @@ def read_from_core_sram(cores, stage, idx, flag=False):
 def dot_production(cores, stage, count, idx, core_num=1):
     stage = stage
     if cores[idx].calculator_and_array.complete == False:
+        cores[idx].statistics.util_counter += 1
         cores[idx].calculator_and_array.latency_counter += 1
         if cores[idx].calculator_and_array.latency_counter == cores[idx].calculator_and_array.latency_count:
             cores[idx].calculator_and_array.latency_counter = 0
@@ -229,7 +231,7 @@ def corearray_layernorm_data_transfer(cores, layernorm, core_idx, array_idx_ln, 
             if array_idx_ln[0] == (mac_lane - 1):
                 # a mac_lane*mac_lane block of data all finish removing 
                 layernorm[0].update_to_x((cores[core_idx].calculator_and_array.block_counter_rm - 1) % (head_embedding_dim // mac_lane))
-                print("LN state matrix update to X idx: " + str((cores[core_idx].calculator_and_array.block_counter_rm - 1) % (head_embedding_dim // mac_lane)))
+                # print("LN state matrix update to X idx: " + str((cores[core_idx].calculator_and_array.block_counter_rm - 1) % (head_embedding_dim // mac_lane)))
 
 def layernorm_coresram1_data_transfer(cores, layernorm, core_idx, prev_core_idx):
     if layernorm[0].ln_complete() and cores[core_idx].sram1.check_remove_state(layernorm[0].row_idx):
@@ -237,7 +239,7 @@ def layernorm_coresram1_data_transfer(cores, layernorm, core_idx, prev_core_idx)
         layernorm[0].update_to_removing()
     elif layernorm[0].removing():
         layernorm[0].sram_latency_counter += 1
-        print("layernorm[0].sram_latency_counter: " + str(layernorm[0].sram_latency_counter))
+        # print("layernorm[0].sram_latency_counter: " + str(layernorm[0].sram_latency_counter))
         if layernorm[0].sram_latency_counter == cores[core_idx].sram1.latency_count:
             layernorm[0].sram_latency_counter = 0
             cores[core_idx].sram1.update_to_ready_from_ln(layernorm[0].row_idx, cores[prev_core_idx].sram1.blocknum_row_std)
@@ -263,13 +265,13 @@ def corearray_coresram_data_transfer(cores, prev_core_idx, nxt_core_idx, array_i
             if array_idx_gb[prev_core_idx] == (mac_lane - 1):
                 if sram == 1:
                     cores[nxt_core_idx].sram1.array_block_counter += 1
-                    print("in corearray_coresram_data_transfer sram1.array_block_counter: " + str(cores[nxt_core_idx].sram1.array_block_counter))
+                    # print("in corearray_coresram_data_transfer sram1.array_block_counter: " + str(cores[nxt_core_idx].sram1.array_block_counter))
                     if (cores[nxt_core_idx].sram1.array_block_counter % 2) == 0:
                         cores[nxt_core_idx].sram1.update_to_ready((int(cores[nxt_core_idx].sram1.array_block_counter // 2) - 1))
                     if cores[nxt_core_idx].sram1.array_block_counter == cores[prev_core_idx].calculator_and_array.block_cnt:
                         cores[nxt_core_idx].sram1.write_complete = True
                 else:
-                    print("in corearray_coresram_data_transfer sram2.array_block_counter: " + str(cores[nxt_core_idx].sram2.array_block_counter))
+                    # print("in corearray_coresram_data_transfer sram2.array_block_counter: " + str(cores[nxt_core_idx].sram2.array_block_counter))
                     cores[nxt_core_idx].sram2.array_block_counter += 1
                     if matrix == "K":
                         if (cores[nxt_core_idx].sram2.array_block_counter % 2) == 0:
@@ -345,7 +347,7 @@ def dump_all(cores, global_buffers, softmax, layernorm, stage, latency, core_num
             global_buffers[i].dump_rm_status(i)
         global_buffers[3].dump_a_state_matrix()
         softmax[0].dump_cal_status()
-        print("stage: " + str(stage))
+        # print("stage: " + str(stage))
         if (stage == 0) or (stage == 1):
             print("gb0-array complete1: " + str(global_buffers[0].array_complete1))
             print("gb0-array complete2: " + str(global_buffers[0].array_complete2))
@@ -447,6 +449,8 @@ def simulating(args):
     stop = False
     # when core = 5, this variable indicates whether matrix A can be put into the core SRAM
     use_sram = False
+    # global utilization counter, for calculating each core's utilization
+    util_counter = 0
 
     """ HW initialization """
 
@@ -681,6 +685,8 @@ def simulating(args):
     count = [0]
     # 1 if last block of A should be written into GB
     flag = [0]
+    # helper counters for marking the end calculation of a core 
+    end_counter = [0]*7
     
     # for core_num = 1
     stage = 0
@@ -1056,13 +1062,33 @@ def simulating(args):
             if global_buffers[7].array_complete2:
                 stop = True
                 dump_all(cores, global_buffers, softmax, layernorm, stage, latency, args.core_num)
-                print("qkv_stage: " + str(qkv_stage))
+                # print("qkv_stage: " + str(qkv_stage))
+
+            ii = 0
+            for core in cores:
+                if end_counter[ii] == 0:
+                    if core.calculator_and_array.complete:
+                        print()
+                        print("###################### core" + str(ii) + " computation completes! #################")
+                        print("latency: " + str(latency))
+                        print()
+                        end_counter[ii] += 1
+                ii += 1
 
         else:
             raise NotImplementedError("Core number of " + str(args.core_num) + " is not supported yet!")
         
         latency += utils.METATIME
+        util_counter += 1
         counter += 1
+
+
+    """ Calculate utilization """
+    ii = 0
+    print("Utilization of each core: ")
+    for core in cores:
+        print("core" + str(ii) + ": " + str(round(100 * (core.statistics.util_counter / util_counter), 2)) + " %")
+        ii += 1
 
     return latency
 

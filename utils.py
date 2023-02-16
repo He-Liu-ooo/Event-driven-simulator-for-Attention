@@ -1,5 +1,5 @@
 """ meta time of the whole system, in nanoseconds """
-METATIME = 0.1 
+METATIME = 0.2 
 
 
 """ 

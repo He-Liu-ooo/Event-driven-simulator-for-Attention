@@ -1,5 +1,6 @@
 from calculator_and_array import CalculatorAndArray
 from sram import SRAM1, SRAM2
+from statistics import Statistics
 import utils
 
 import numpy as np
@@ -25,6 +26,8 @@ class Core:
         self.calculator_and_array = CalculatorAndArray(mac_lane, mac_num, block_cnt, array_and_calculator_latency_count)
 
         self.blocknum_cal = [0, 0]
+
+        self.statistics = Statistics()
 
     def dump_configs(self, id):
         print("----------------------------------------------")

@@ -200,9 +200,9 @@ class SRAM1(SRAM):
         
         # how many mac_lane rows of X can be stored in sram1 at the same time
         row_num = self.height // self.subsum_cnt_std
-        print("row idx: " + str(row_idx))
+        # print("row idx: " + str(row_idx))
         idx = row_idx % row_num
-        print("sram row idx: " + str(idx))
+        # print("sram row idx: " + str(idx))
         for i in range(self.subsum_cnt_std):
             self.sram_state_matrix[idx * self.subsum_cnt_std + i] = utils.READY
 
