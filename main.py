@@ -23,18 +23,22 @@ def argparser():
                     help = 'number of MAC lane in matrix computation core(how many vector dot production can calculate in parallel)')
     ap.add_argument('--MAC-num', type = int, default = 32, \
                     help = 'number of MAC within a lane(dimension of a dot production)')
-    ap.add_argument('--SRAM-access-latency', type = int, default = 100, \
+    ap.add_argument('--SRAM-access-latency', type = int, default = 1, \
                     help = 'how many times the time of SRAM access is metatime')
-    ap.add_argument('--GB-access-latency', type = int, default = 800, \
+    ap.add_argument('--GB-access-latency', type = int, default = 50, \
                     help = 'how many times the time of global buffer access is metatime') 
-    ap.add_argument('--array-access-and-calculation-latency', type = int, default = 2, \
+    ap.add_argument('--GB-SRAM-bandwith', type = int, default = 32, \
+                    help = 'number of mac_lane*mac_num BYTE of data can be transferred from GB to core SRAM during a GB-access-latency')
+    ap.add_argument('--array-access-and-calculation-latency', type = int, default = 1, \
                     help = 'how many times the time of array access and calculation is metatime') 
-    ap.add_argument('--softmax-cal-latency', type = int, default = 10, \
+    ap.add_argument('--softmax-cal-latency', type = int, default = 60, \
                     help = 'how many times the time of softmax calculation is metatime')
     ap.add_argument('--softmax-throughput', type = int, default = 6, \
                     help = 'number of mac_lane*mac_lane blocks can be transferred from GB to Softmax Unit at a time')     
-    ap.add_argument('--layernorm-cal-latency', type = int, default = 20, \
+    ap.add_argument('--layernorm-cal-latency', type = int, default = 10, \
                     help = 'how many times the time of layernorm operation is metatime') 
+    ap.add_argument('--head-id', type = int, default = 0, \
+                    help = 'which split head is this template simulating, < head-num')
 
     """ SW configs """
     ap.add_argument('--seq-length', type = int, default = 384, \
@@ -85,9 +89,10 @@ def read_from_core_sram(cores, stage, idx, flag=False):
             else:
                 cores[idx].sram_cal_advance()
             stage = stage + 1
+
     return stage
 
-def dot_production(cores, stage, count, idx, core_num=1):
+def dot_production(cores, stage, count, idx, core_num=1, a_row_idx=[0], a_col_idx=[0]):
     stage = stage
     if cores[idx].calculator_and_array.complete == False:
         cores[idx].statistics.util_counter += 1
@@ -95,6 +100,9 @@ def dot_production(cores, stage, count, idx, core_num=1):
         if cores[idx].calculator_and_array.latency_counter == cores[idx].calculator_and_array.latency_count:
             cores[idx].calculator_and_array.latency_counter = 0
             cores[idx].calculator_and_array.update_array()
+            if cores[idx].calculator_and_array.array_state_matrix[0] == utils.COMPLETESUM:
+                a_row_idx[0] = cores[idx].blocknum_cal[0]
+                a_col_idx[0] = cores[idx].blocknum_cal[1]
             if cores[idx].sram2.cal_complete == False:
                 stage = stage - 1 
     if cores[idx].calculator_and_array.complete:
@@ -199,9 +207,13 @@ def corearray_gb_data_transfer(cores, global_buffers, core_idx, gb_idx, array_id
                         global_buffers[gb_idx].update_to_a1(cores[core_idx].calculator_and_array.block_counter_cal)
             elif core_num == 5:
                 if gb_idx == 3:
-                    if array_idx_gb[gb_idx] == 0:
-                        a_row_idx[0] = cores[core_idx].blocknum_cal[0]
-                        a_col_idx[0] = cores[core_idx].blocknum_cal[1]
+                    # if array_idx_gb[gb_idx] == 0:
+                        
+
+                    # print("array_idx_gb[3]: " + str(array_idx_gb[gb_idx]))
+                    # print("[a_row_idx, a_col_idx]: [" + str(a_row_idx[0]) + ", " + str(a_col_idx[0]) + "]")
+                    # print("cores[3].[blocknum_cal[0], blocknum_cal[1]]: [" + str(cores[core_idx].blocknum_cal[0]) + ", " + str(cores[core_idx].blocknum_cal[1]) + "]")
+
                     if array_idx_gb[gb_idx] == (mac_lane - 1):
                         if flag[0] == 1:
                             global_buffers[gb_idx].update_to_a1(global_buffers[3].array_data_cnt)
@@ -215,6 +227,8 @@ def corearray_gb_data_transfer(cores, global_buffers, core_idx, gb_idx, array_id
             
     if (gb_idx == 3) & (cores[core_idx].calculator_and_array.block_counter_cal == global_buffers[3].array_data_cnt):
         flag[0] = 1
+
+    # print("cores[core_idx].calculator_and_array.block_counter_cal: " + str(cores[core_idx].calculator_and_array.block_counter_cal))
 
 def corearray_layernorm_data_transfer(cores, layernorm, core_idx, array_idx_ln, mac_lane, head_embedding_dim):
     if (layernorm[0].busy == False) and (cores[core_idx].calculator_and_array.array_layernorm_busy == False):
@@ -265,6 +279,7 @@ def corearray_coresram_data_transfer(cores, prev_core_idx, nxt_core_idx, array_i
             if array_idx_gb[prev_core_idx] == (mac_lane - 1):
                 if sram == 1:
                     cores[nxt_core_idx].sram1.array_block_counter += 1
+                    # TODO add here to judge whether
                     # print("in corearray_coresram_data_transfer sram1.array_block_counter: " + str(cores[nxt_core_idx].sram1.array_block_counter))
                     if (cores[nxt_core_idx].sram1.array_block_counter % 2) == 0:
                         cores[nxt_core_idx].sram1.update_to_ready((int(cores[nxt_core_idx].sram1.array_block_counter // 2) - 1))
@@ -413,13 +428,13 @@ def dump_all(cores, global_buffers, softmax, layernorm, stage, latency, core_num
             cores[1].dump_cal_status("K")
             # cores[2].dump_state_matrix("V")
             cores[2].dump_cal_status("V")
-        # cores[3].dump_state_matrix("Q*K")
-        if cores[3].blocknum_cal[1] < 12:
-            cores[3].dump_cal_status("Q*K")
+        cores[3].dump_state_matrix("Q*K")
+        # if cores[3].blocknum_cal[1] < 12:
+        cores[3].dump_cal_status("Q*K")
         # for i in range(5):
         #     global_buffers[i].dump_rm_status(i)
-        # print("GB3 a state matrix")
-        # print(global_buffers[3].a_state_matrix)
+        print("GB3 a state matrix")
+        print(global_buffers[3].a_state_matrix)
         # softmax[0].dump_cal_status()
         cores[4].dump_state_matrix("A'*V")
         cores[4].dump_cal_status("A'*V")
@@ -688,6 +703,9 @@ def simulating(args):
     # helper counters for marking the end calculation of a core 
     end_counter = [0]*7
     
+    # 
+    st_counter = 0
+
     # for core_num = 1
     stage = 0
     # for core_num = 5    
@@ -1011,7 +1029,7 @@ def simulating(args):
                 a_stage = read_from_core_sram(cores, a_stage, 3, True)
             elif (a_stage == 1):
                 """ Dot production """ 
-                a_stage = dot_production(cores, a_stage, count, 3, args.core_num)
+                a_stage = dot_production(cores, a_stage, count, 3, args.core_num, a_row_idx, a_col_idx)
 
 
             """ Softmax execution """
@@ -1052,14 +1070,35 @@ def simulating(args):
             """ For debug """
             # if latency > 22000:
             # if (latency > 130145) and (latency < 132913):
-            if counter == 500000:
+            # if cores[5].blocknum_cal[0] > 61:
+            #     if st_counter == 0:
+            #         counter = 0
+            #         st_counter = 1
+
+            #     if (cores[5].blocknum_cal[0] == 62) and (cores[5].blocknum_cal[1] < 250):
+            #         if counter == 500:
+            #             dump_all(cores, global_buffers, softmax, layernorm, stage, latency, args.core_num)
+            #             counter = 0
+            #     else:
+            #         if st_counter == 0:
+            #             counter = 0
+            #             st_counter = 1
+            #         if counter == 50:
+            #             dump_all(cores, global_buffers, softmax, layernorm, stage, latency, args.core_num)
+            #             counter = 0
+            # else:
+            if counter == 100000:
                 dump_all(cores, global_buffers, softmax, layernorm, stage, latency, args.core_num)
                 counter = 0
+            # dump_all(cores, global_buffers, softmax, layernorm, stage, latency, args.core_num)
+
+            
 
             # if layernorm[0].row_idx > 5:
             # if fc2_stage == 2:
             # if cores[5].blocknum_cal[0] == 2:
             if global_buffers[7].array_complete2:
+            # if cores[3].blocknum_cal[0] > 1:
                 stop = True
                 dump_all(cores, global_buffers, softmax, layernorm, stage, latency, args.core_num)
                 # print("qkv_stage: " + str(qkv_stage))
@@ -1096,7 +1135,7 @@ def main():
     """ Main function """
 
     """ Sys setup """
-    sys.stdout = open('./results.txt', mode = 'w', encoding='utf-8')
+    # sys.stdout = open('./results.txt', mode = 'w', encoding='utf-8')
 
     args = argparser().parse_args()
     dump_configs(args)
