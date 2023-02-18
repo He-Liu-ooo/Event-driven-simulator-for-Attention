@@ -3,6 +3,11 @@ import numpy as np
 from base_unit import BaseUnit
 import utils
 
+"""
+TODO
+1. Consider change the data structure of SRAM.state_matrix 
+"""
+
 class SRAM(BaseUnit):
     """ 
     Core SRAM
@@ -51,30 +56,30 @@ class SRAM(BaseUnit):
             elif mode == "Q*K":
                 print(self.sram_state_matrix.reshape(-1,2)[:24])
             elif mode == "A'*V":
-                # print(self.sram_state_matrix[0:6])
-                # print(self.sram_state_matrix[6:12])
-                # print(self.sram_state_matrix[12:18])
-                # print(self.sram_state_matrix[18:24])
-                # print(self.sram_state_matrix[24:30])
-                # print(self.sram_state_matrix[30:36])
-                # print(self.sram_state_matrix[36:42])
-                # print(self.sram_state_matrix[42:48])
-                # print(self.sram_state_matrix[48:54])
-                # print(self.sram_state_matrix[54:60])
-                # print(self.sram_state_matrix[60:66])
-                # print(self.sram_state_matrix[66:72])
-                # print(self.sram_state_matrix[72:78])
-                print(self.sram_state_matrix[0:12])
-                print(self.sram_state_matrix[12:24])
-                print(self.sram_state_matrix[24:36])
-                print(self.sram_state_matrix[36:48])
-                print(self.sram_state_matrix[48:60])
-                print(self.sram_state_matrix[60:72])
-                print(self.sram_state_matrix[72:84])
-                print(self.sram_state_matrix[84:96])
-                print(self.sram_state_matrix[96:108])
-                print(self.sram_state_matrix[108:120])
-                print(self.sram_state_matrix[120:128])
+                print(self.sram_state_matrix[0:6])
+                print(self.sram_state_matrix[6:12])
+                print(self.sram_state_matrix[12:18])
+                print(self.sram_state_matrix[18:24])
+                print(self.sram_state_matrix[24:30])
+                print(self.sram_state_matrix[30:36])
+                print(self.sram_state_matrix[36:42])
+                print(self.sram_state_matrix[42:48])
+                print(self.sram_state_matrix[48:54])
+                print(self.sram_state_matrix[54:60])
+                print(self.sram_state_matrix[60:66])
+                print(self.sram_state_matrix[66:72])
+                print(self.sram_state_matrix[72:78])
+                # print(self.sram_state_matrix[0:12])
+                # print(self.sram_state_matrix[12:24])
+                # print(self.sram_state_matrix[24:36])
+                # print(self.sram_state_matrix[36:48])
+                # print(self.sram_state_matrix[48:60])
+                # print(self.sram_state_matrix[60:72])
+                # print(self.sram_state_matrix[72:84])
+                # print(self.sram_state_matrix[84:96])
+                # print(self.sram_state_matrix[96:108])
+                # print(self.sram_state_matrix[108:120])
+                # print(self.sram_state_matrix[120:128])
 
         else:
             if (mode == "Q") or (mode == "K") or (mode == "V") or (mode == "FC1"): 
@@ -82,19 +87,23 @@ class SRAM(BaseUnit):
                 print(self.sram_state_matrix[:64])
                 print("1")
                 print(self.sram_state_matrix[64:128])
+                print("2")
+                print(self.sram_state_matrix[128:192])
+                print("3")
+                print(self.sram_state_matrix[192:256])
                 print("30")
                 print(self.sram_state_matrix[1920:1984])
                 print("31")
                 print(self.sram_state_matrix[1984:])
             elif mode == "Q*K":
-                # print("0")
-                # print(self.sram_state_matrix[:192])
-                # print("1")
-                # print(self.sram_state_matrix[192:384])
                 print("0")
-                print(self.sram_state_matrix[:384])
+                print(self.sram_state_matrix[:192])
                 print("1")
-                print(self.sram_state_matrix[384:768])
+                print(self.sram_state_matrix[192:384])
+                # print("0")
+                # print(self.sram_state_matrix[:384])
+                # print("1")
+                # print(self.sram_state_matrix[384:768])
             elif mode == "A'*V":
                 print(self.sram_state_matrix[:64])
                 print(self.sram_state_matrix[64:128])
@@ -102,24 +111,22 @@ class SRAM(BaseUnit):
                 print(self.sram_state_matrix[192:256])
                 print(self.sram_state_matrix[256:320])
                 print(self.sram_state_matrix[320:384])
-                print("last")
-                print(self.sram_state_matrix[640:704])
-                print(self.sram_state_matrix[704:768])
+                # print("last")
+                # print(self.sram_state_matrix[640:704])
+                # print(self.sram_state_matrix[704:768])
             elif mode == "FC2":
                 print("0")
                 print(self.sram_state_matrix[:16])
                 print("1")
                 print(self.sram_state_matrix[16:32])
+                print("2")
+                print(self.sram_state_matrix[32:48])
+                print("3")
+                print(self.sram_state_matrix[48:64])
                 print("126")
                 print(self.sram_state_matrix[2016:2032])
                 print("127")
                 print(self.sram_state_matrix[2032:2048])
-
-    def update_to_ready(self, idx):
-        self.sram_state_matrix[idx] = utils.READY
-
-    def update_to_removing(self, idx):
-        self.sram_state_matrix[idx] = utils.REMOVING
 
     def reset(self):
         self.cal_complete = False
@@ -185,9 +192,21 @@ class SRAM1(SRAM):
     def ready(self):
         return (self.sram_state_matrix[self.blocknum_row_sram_idx_cal * self.subsum_cnt_std + self.subsum_cnt_idx_cal] == utils.READY)
 
+    def update_to_removing(self, start, end):
+        for i in range(start, end + 1):
+            self.sram_state_matrix[i] = utils.REMOVING
+
+    def update_to_ready(self, start, end):
+        for i in range(start, end + 1):
+            self.sram_state_matrix[i] = utils.READY
+
     def update_to_remove(self, blocknum_row_sram_idx_cal):
         for i in range(self.subsum_cnt_std):
             self.sram_state_matrix[blocknum_row_sram_idx_cal * self.subsum_cnt_std + i] = utils.REMOVE
+    
+    def update_to_ready_from_array(self, idx):
+        """ In case of data transfer between last core's array to this core's SRAM """
+        self.sram_state_matrix[idx] = utils.READY
     
     def update_to_ready_from_softmax(self, a_row, block_idx_start, block_idx_end):
         for i in range(block_idx_start // 2, (block_idx_end + 1) // 2):
@@ -238,7 +257,8 @@ class SRAM1(SRAM):
                 self.update_to_remove(self.blocknum_row_sram_idx_cal)
                 self.blocknum_row_sram_idx_cal += 1
             # calculation of a SRAM completes, but the whole calculation is not completed
-            elif (blocknum_cal[0] + 1) < self.blocknum_row_std:
+            # elif (blocknum_cal[0] + 1) < self.blocknum_row_std:
+            elif (blocknum_cal[0]) < self.blocknum_row_std:
                 self.subsum_cnt_idx_cal = 0
                 self.update_to_remove(self.blocknum_row_sram_idx_cal)
                 self.blocknum_row_sram_idx_cal = 0
@@ -339,7 +359,70 @@ class SRAM2(SRAM):
         else:
             # not all matrix data can be stored in SRAM at the same time
             return (self.sram_state_matrix[self.subsum_cnt_idx_cal * self.blocknum_col_sram_std * self.block_col_std + (blocknum_col_cal % self.blocknum_col_sram_std) * self.block_col_std + self.block_col_idx_cal] == utils.READY)
-            
+    
+    def update_to_removing(self, row_idx_start, row_idx_end, col_idx_start, col_idx_end):
+        for i in range(col_idx_start, col_idx_end + 1):
+            if col_idx_start == col_idx_end:
+                j_start = row_idx_start
+                j_end = row_idx_end + 1
+            elif (col_idx_end - col_idx_start) == 1:
+                if i == col_idx_start:
+                    j_start = row_idx_start
+                    j_end = self.subsum_cnt_std
+                else:
+                    j_start = 0
+                    j_end = row_idx_end + 1
+            else:
+                if i == col_idx_start:
+                    j_start = row_idx_start
+                    j_end = self.subsum_cnt_std
+                elif i == col_idx_end:
+                    j_start = 0
+                    j_end = row_idx_end + 1
+                else:
+                    j_start = 0
+                    j_end = self.subsum_cnt_std
+
+            for j in range(j_start, j_end):
+                if self.blocknum_col_std <= self.blocknum_col_sram_std:
+                    for k in range(self.block_col_std):
+                        self.sram_state_matrix[j * self.logic_sram_col_cnt_std + (i - 1) * self.block_col_std + k] = utils.REMOVING
+                else: 
+                    for k in range(self.block_col_std):
+                        self.sram_state_matrix[j * self.blocknum_col_sram_std * self.block_col_std + (i - 1) * self.block_col_std + k] = utils.REMOVING
+
+    def update_to_ready(self, row_idx_start, row_idx_end, col_idx_start, col_idx_end):
+        for i in range(col_idx_start, col_idx_end + 1):
+            if col_idx_start == col_idx_end:
+                j_start = row_idx_start
+                j_end = row_idx_end + 1
+            elif (col_idx_end - col_idx_start) == 1:
+                if i == col_idx_start:
+                    j_start = row_idx_start
+                    j_end = self.subsum_cnt_std
+                else:
+                    j_start = 0
+                    j_end = row_idx_end + 1
+            else:
+                if i == col_idx_start:
+                    j_start = row_idx_start
+                    j_end = self.subsum_cnt_std
+                elif i == col_idx_end:
+                    j_start = 0
+                    j_end = row_idx_end + 1
+                else:
+                    j_start = 0
+                    j_end = self.subsum_cnt_std
+
+            for j in range(j_start, j_end):
+                if self.blocknum_col_std <= self.blocknum_col_sram_std:
+                    for k in range(self.block_col_std):
+                        self.sram_state_matrix[j * self.logic_sram_col_cnt_std + (i - 1) * self.block_col_std + k] = utils.READY
+                else: 
+                    for k in range(self.block_col_std):
+                        self.sram_state_matrix[j * self.blocknum_col_sram_std * self.block_col_std + (i - 1) * self.block_col_std + k] = utils.READY
+        
+
     def update_to_remove(self, blocknum_col, block_col_idx_cal):
         if self.blocknum_col_std <= self.blocknum_col_sram_std:
             col_cnt = self.logic_sram_col_cnt_std
@@ -418,6 +501,7 @@ class SRAM2(SRAM):
                     self.update_to_remove(blocknum_cal[1], self.block_col_idx_cal)
                     self.cal_complete = True
                     is_sram1_advance = True
+                    blocknum_cal[0] += 1
             else:
             # if SRAM2 cannot hold all matrix data
                 # calculation of a mac_lane*mac_lane block's subsum not complete
@@ -459,6 +543,7 @@ class SRAM2(SRAM):
                     self.update_to_remove(self.blocknum_col_sram_idx_cal, self.block_col_idx_cal)
                     self.cal_complete = True
                     is_sram1_advance = True
+                    blocknum_cal[0] += 1
 
         return is_sram1_advance
 

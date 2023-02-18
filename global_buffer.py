@@ -3,6 +3,12 @@ import utils
 
 import numpy as np
 
+""" 
+TODO
+1. combine the 3 "find_sram_target" function
+2. combine the 2 SRAM2 case: whether weight matrix can be hold in SRAM2 at once
+"""
+
 class GlobalBuffer(BaseUnit):
     """ 
     Global buffer of a cluster
@@ -41,10 +47,11 @@ class GlobalBuffer(BaseUnit):
 
     array_data_counter: record how many data has been moved into gb
 
+    gb_sram_bandwidth: number of mac_lane*mac_num BYTE of data that can be transferred from GB to core SRAM during one access time               
     softmax_bandwidth: number of mac_lane*mac_lane blocks can be transferred from GB to Softmax Unit at a time
     """
 
-    def __init__(self, latency_count, softmax_bandwidth=0):
+    def __init__(self, latency_count, gb_sram_bandwidth, softmax_bandwidth=0):
         super(GlobalBuffer, self).__init__(latency_count)
 
         self.sram1_busy = False
@@ -80,6 +87,7 @@ class GlobalBuffer(BaseUnit):
 
         self.array_data_counter = 0
 
+        self.gb_sram_bandwidth = gb_sram_bandwidth
         self.softmax_bandwidth = softmax_bandwidth
 
         
@@ -88,6 +96,7 @@ class GlobalBuffer(BaseUnit):
         print("| Global Buffer Configuration")
         print("| + access latency: " + str(self.latency_count * utils.METATIME) + "ns")
         print("| + softmax bandwidth: " + str(self.softmax_bandwidth))
+        print("| + SRAM bandwidth: " + str(self.gb_sram_bandwidth))
         print("----------------------------------------------")
     
     def dump_mappings(self, id):
@@ -119,12 +128,7 @@ class GlobalBuffer(BaseUnit):
         print("softmax_busy = " + str(self.softmax_busy))
         
     def add_mapping(self, blocknum_row_cnt, array_data_cnt, sram_subsum_cnt, sram1_rownum_cnt, sram2_colnum_cnt, sram2_sram_colnum_cnt, flag=False):
-        """  
-        # TODO not implemented yet
-        num_working_std: maximum number of data can be transferred at the same time, which is equal to mac_lane, 
-                         with the purpose of match the bandwidth of SRAM1
-                         # NOTE this could be modified if the bandwidth of GB is far different from general standards 
-       
+        """   
         blocknum_row_cnt: number of mac_lane rows in result matrix
         sram_subsum_cnt: number of subsums acculmulated to complete the calculation of a  mac_lane * mac_lane block
                          1024/32=32 for Q/K/V calculation, 64/32=2 for Q*K calculation, 384/32=12 for A'*V calculation, under seq-len = 384
@@ -137,7 +141,6 @@ class GlobalBuffer(BaseUnit):
                           column number for sram2 logic state matrix
         sram2_sram_colnum_cnt: number of columns of data a SRAM2 can store at the same time
                                64 for row=1024 case and 16 for row=4096 case
-                               
         """
 
         self.blocknum_row_cnt = blocknum_row_cnt
@@ -152,7 +155,6 @@ class GlobalBuffer(BaseUnit):
             self.a_state_matrix = np.zeros((self.blocknum_row_cnt, int(self.array_data_cnt // self.blocknum_row_cnt)), dtype=int)
             print("A state matrix size: [" + str(self.a_state_matrix.shape[0]) + ", " + str(self.a_state_matrix.shape[1]) + "]")
 
-        # self.num_working_std = num_working
 
     def update_to_a1(self, block_counter):
         if block_counter > 0:
@@ -219,6 +221,7 @@ class GlobalBuffer(BaseUnit):
                 self.colnum2_sram += 1
             # if a "sram row" completes, but a "real row" not
             elif (self.col[1] + self.colnum2  * mac_lane - self.sram2_sram_colnum_cnt + 1) < self.sram2_colnum_cnt:
+                # here means a brand-new SRAM update begins
                 self.col[1] = 0
                 self.colnum2_sram = 1
                 self.colnum2 += 1
@@ -246,64 +249,226 @@ class GlobalBuffer(BaseUnit):
     def find_sram_target(self, sram_state_matrix, mac_lane, sram):
         """ Find the target data in sram1 that will be transferred """
 
-        row = 0
-        col = 0
-        idx = 0
+        # the returning flattened idx
+        idx_start = 0
+        idx_end = 0
+
+        # recording the original value of the class, incase we regret modification
+        row_raw = 0
+        col_raw = 0
+        rownum1_raw = 0
+        sram1_complete1_raw = 0
+
+        colnum2_sram_raw = 0
+        colnum2_raw = 0
+        rownum2_raw = 0
+        sram2_complete1_raw = 0
+
+        # last target that satisfy the conditions
+        row_end = 0
+        col_end = 0
+        colnum2_sram_end = 0
+
         sram2_colnum_cnt_tmp = 0
+
+        # indicate whether SRAM2 can hold the whole matrix of data
         flag = False
+
         if sram == 1:
             # if for sram1 
-            if sram_state_matrix[self.row[0] * self.sram_subsum_cnt + self.col[0]] == utils.REMOVE:
-                # hit = True
-                row = self.row[0]
-                col = self.col[0]
-                self.sram1_busy = True
-                self.rowcol_advance1()
-            idx = row * self.sram_subsum_cnt + col
+            # we record the values at the begining, in case of restoration
+            row_raw = self.row[0]
+            col_raw = self.col[0] 
+            rownum1_raw = self.rownum1
+            sram1_complete1_raw = self.sram1_complete1
+
+            # find the band of data
+            for i in range(self.gb_sram_bandwidth):
+                if sram_state_matrix[self.row[0] * self.sram_subsum_cnt + self.col[0]] == utils.REMOVE:
+                    # hit = True
+                    if i == (self.gb_sram_bandwidth - 1):
+                        # last data still satisfies, which means we successfully find a removable band of data
+                        self.sram1_busy = True
+                        row_end = self.row[0]
+                        col_end = self.col[0]
+                        self.rowcol_advance1()
+                    elif ((self.col[0] + 1) >= self.sram_subsum_cnt) and \
+                            ((self.row[0] + 1) >= self.sram1_rownum_cnt) or ((self.row[0] + (self.rownum1 - 1) * self.sram1_rownum_cnt + 1) >= self.blocknum_row_cnt) and \
+                                ((self.col[1] + 1) < self.sram2_colnum_cnt):
+                        # if row idx will advance to 0, stop here
+                        self.sram1_busy = True
+                        row_end = self.row[0]
+                        col_end = self.col[0]
+                        self.rowcol_advance1()
+                        break
+                    else:
+                        # go and find whether the next data is true
+                        self.rowcol_advance1()
+                    
+                    if self.sram1_complete1:
+                        # completes
+                        self.sram1_busy = True
+                        row_end = self.row[0]
+                        col_end = self.col[0]
+                        break
+                else:
+                    break
+
+            if self.sram1_busy:
+                # if we successfully found a removable band of data
+                idx_start = row_raw * self.sram_subsum_cnt + col_raw
+                idx_end = row_end * self.sram_subsum_cnt + col_end
+            else:
+                # if not, we should restore the state
+                self.row[0] = row_raw
+                self.col[0] = col_raw
+                self.rownum1 = rownum1_raw 
+                self.sram1_complete1 = sram1_complete1_raw
+                
+            return (idx_start, idx_end)
+        
         elif sram == 2:
             # if for sram2 
+            # we record the values at the begining, in case of restoration
+            row_raw = self.row[1]
+            col_raw = self.col[1]
+            colnum2_sram_raw = self.colnum2_sram
+            colnum2_raw = self.colnum2
+            rownum2_raw = self.rownum2
+            sram2_complete1_raw = self.sram2_complete1
+
             if self.sram2_colnum_cnt <= self.sram2_sram_colnum_cnt:
                 sram2_colnum_cnt_tmp = self.sram2_colnum_cnt
                 flag = True
             else:
                 sram2_colnum_cnt_tmp = self.sram2_sram_colnum_cnt
 
-            # print("colnum2: " + str(self.colnum2))
-            # print("colnum2_sram: " + str(self.colnum2_sram))
-            if sram_state_matrix[self.row[1] * sram2_colnum_cnt_tmp + self.col[1]] == utils.REMOVE:
-                # hit = True
-                # self.num_working += 1
-                row = self.row[1]
-                col = self.col[1]
-                # if self.num_working == self.num_working_std:
-                self.sram2_busy = True
-                self.rowcol_advance2(mac_lane, flag)
-            idx = row * sram2_colnum_cnt_tmp + col
+            # find the band of data
+            for i in range(self.gb_sram_bandwidth * mac_lane):
+                if sram_state_matrix[self.row[1] * sram2_colnum_cnt_tmp + self.col[1]] == utils.REMOVE:
+                    # hit = True
+                    if i == (self.gb_sram_bandwidth * mac_lane - 1):
+                        # last data still satisfies, which means we successfully find a removable band of data
+                        self.sram2_busy = True
+                        row_end = self.row[1]
+                        # col_end = self.col[1]
+                        colnum2_sram_end = self.colnum2 if flag else self.colnum2_sram
+                        self.rowcol_advance2(mac_lane, flag)
+                    elif (flag == False) and ((self.col[1] + 1 - self.colnum2_sram * mac_lane) >= 0) and ((self.row[1] + 1) >= self.sram_subsum_cnt) and \
+                        ((self.col[1] + 1) >= self.sram2_sram_colnum_cnt) and ((self.col[1] + self.colnum2  * mac_lane - self.sram2_sram_colnum_cnt + 1) < self.sram2_colnum_cnt):
+                        # if a brand new SRAM2 is going to be updated
+                        self.sram2_busy = True
+                        row_end = self.row[1]
+                        # col_end = self.col[1]
+                        colnum2_sram_end = self.colnum2 if flag else self.colnum2_sram
+                        self.rowcol_advance2(mac_lane, flag)
+                        break
+                    else:
+                        # go and find whether the next data is true
+                        self.rowcol_advance2(mac_lane, flag)
+                    
+                    if self.sram2_complete1:
+                        # completes
+                        self.sram2_busy = True
+                        row_end = self.row[1]
+                        # col_end = self.col[1]
+                        colnum2_sram_end = self.colnum2 if flag else self.colnum2_sram
+                        break
+                else:
+                    break
+
+            if self.sram2_busy == False:
+                # if we cannot successfully found a removable band of data, we should restore the state
+                self.row[1] = row_raw
+                self.col[1] = col_raw
+                self.colnum2_sram = colnum2_sram_raw
+                self.colnum2 = colnum2_raw
+                self.rownum2 = rownum2_raw
+                self.sram2_complete1 = sram2_complete1_raw
+            else:
+                # print("in SRAM2, start:[" + str(row_raw) + ", " + str(col_raw) + "], end:[" + str(row_end) + ", " + str(col_end) + "]")
+                colnum2_tmp = str(colnum2_raw) if flag else str(colnum2_sram_raw)
+                # print("colnum2: [" + colnum2_tmp + ", " + str(colnum2_sram_end) + "]")
+
+            return (row_raw, row_end, colnum2_raw if flag else colnum2_sram_raw, colnum2_sram_end)
         else:
             assert(0)
 
-        return idx
     
     def find_sram1_target_with_fc1_check(self, sram_state_matrix, mac_lane):
         """ Check if the data of FC1 result matrix that is going to update FC2's core SRAM1 is ready """
-        row = 0
-        col = 0
-        idx = 0
-        # if for sram1 
-        if sram_state_matrix[self.row[0] * self.sram_subsum_cnt + self.col[0]] == utils.REMOVE:
-            # print("[row, col]: [" + str(self.row[0]) + ", " + str(self.col[0]) + "]")
-            # print("self.rownum1: " + str(self.rownum1))
-            # hit = True
-            row = self.row[0]
-            col = self.col[0]
-            idx = row * self.sram_subsum_cnt + col
-            if (((self.sram2_colnum_cnt * 4) // mac_lane) * self.sram1_rownum_cnt * (self.rownum1 - 1) + idx * 2) <= self.fc1_blocknum_counter:
-                self.sram1_busy = True
-                self.rowcol_advance1()
-        idx = row * self.sram_subsum_cnt + col
-        
-        return idx
 
+        # the returning flattened idx
+        idx_start = 0
+        idx_end = 0
+        # recording the original value of the class, incase we regret modification
+        row_raw = 0
+        col_raw = 0
+        rownum1_raw = 0
+        sram1_complete1_raw = 0
+        # last target that satisfy the conditions
+        row_end = 0
+        col_end = 0
+
+        # if for sram1 
+        # we record the values at the begining, in case of restoration
+        row_raw = self.row[0]
+        col_raw = self.col[0] 
+        rownum1_raw = self.rownum1
+        sram1_complete1_raw = self.sram1_complete1
+
+        # find the band of data
+        for i in range(self.gb_sram_bandwidth):
+            if (sram_state_matrix[self.row[0] * self.sram_subsum_cnt + self.col[0]] == utils.REMOVE) and \
+                self.check_fc1(self.row[0], self.col[0], mac_lane):
+                # hit = True
+                if i == (self.gb_sram_bandwidth - 1):
+                    # last data still satisfies, which means we successfully find a removable band of data
+                    row_end = self.row[0]
+                    col_end = self.col[0]
+                    self.sram1_busy = True
+                    self.rowcol_advance1()
+                elif ((self.col[0] + 1) >= self.sram_subsum_cnt) and \
+                        ((self.row[0] + 1) >= self.sram1_rownum_cnt) or ((self.row[0] + (self.rownum1 - 1) * self.sram1_rownum_cnt + 1) >= self.blocknum_row_cnt) and \
+                            ((self.col[1] + 1) < self.sram2_colnum_cnt):
+                    # this data is not the band's end, and if row idx will advance to 0, stop here
+                    row_end = self.row[0]
+                    col_end = self.col[0]
+                    self.sram1_busy = True
+                    self.rowcol_advance1()
+                    break
+                else:
+                    # go and find whether the next data is true
+                    self.rowcol_advance1()
+
+
+                if self.sram1_complete1:
+                    # completes
+                    self.sram1_busy = True
+                    row_end = self.row[0]
+                    col_end = self.col[0]
+                    break
+            else:
+                break
+
+        if self.sram1_busy:
+            # if we successfully found a removable band of data
+            idx_start = row_raw * self.sram_subsum_cnt + col_raw
+            idx_end = row_end * self.sram_subsum_cnt + col_end
+        else:
+            # if not, we should restore the state
+            self.row[0] = row_raw
+            self.col[0] = col_raw
+            self.rownum1 = rownum1_raw 
+            self.sram1_complete1 = sram1_complete1_raw
+        
+        return (idx_start, idx_end)
+
+    def check_fc1(self, row, col, mac_lane):
+        if (((self.sram2_colnum_cnt * 4) // mac_lane) * self.sram1_rownum_cnt * (self.rownum1 - 1) + (row * self.sram_subsum_cnt + col) * 2) <= self.fc1_blocknum_counter:
+            return True
+        return False
+    
     def find_sram_target_a(self, sram_state_matrix, a_state_matrix, sram1_rownum_cnt):
         """ 
         Find the target data in sram1 that will be transferred and check if GB has the corresponding data 
@@ -311,23 +476,71 @@ class GlobalBuffer(BaseUnit):
         sram1_rownum_cnt: number of mac_lane rows a sub-SRAM can hold at the same time
         """
 
-        row = 0
-        col = 0
-        idx = 0
-        valid = False
+        # the returning flattened idx
+        idx_start = 0
+        idx_end = 0
+        # recording the original value of the class, incase we regret modification
+        row_raw = 0
+        col_raw = 0
+        rownum1_raw = 0
+        sram1_complete1_raw = 0
+        # last target that satisfy the conditions
+        row_end = 0
+        col_end = 0
 
-        if sram_state_matrix[self.row[0] * self.sram_subsum_cnt + self.col[0]] == utils.REMOVE:
-            # sram has a vacancy, now we need to check if GB has a candidate
-            row = self.row[0]
-            col = self.col[0]
-            valid = self.check_a(row, col, a_state_matrix, sram1_rownum_cnt)
-            if valid:
-                # GB has a corresponding candidate
-                self.sram1_busy = True
-                self.rowcol_advance1()
-                idx = row * self.sram_subsum_cnt + col
+        # if for sram1 
+        # we record the values at the begining, in case of restoration
+        row_raw = self.row[0]
+        col_raw = self.col[0] 
+        rownum1_raw = self.rownum1
+        sram1_complete1_raw = self.sram1_complete1
 
-        return idx
+        # find the band of data
+        for i in range(self.gb_sram_bandwidth):
+            if (sram_state_matrix[self.row[0] * self.sram_subsum_cnt + self.col[0]] == utils.REMOVE) and \
+                self.check_a(self.row[0], self.col[0], a_state_matrix, sram1_rownum_cnt):
+                # hit = True
+                if i == (self.gb_sram_bandwidth - 1):
+                    # last data still satisfies, which means we successfully find a removable band of data
+                    row_end = self.row[0]
+                    col_end = self.col[0]
+                    self.sram1_busy = True
+                    self.rowcol_advance1()
+                elif ((self.col[0] + 1) >= self.sram_subsum_cnt) and \
+                        ((self.row[0] + 1) >= self.sram1_rownum_cnt) or ((self.row[0] + (self.rownum1 - 1) * self.sram1_rownum_cnt + 1) >= self.blocknum_row_cnt) and \
+                            ((self.col[1] + 1) < self.sram2_colnum_cnt):
+                    # this data is not the band's end, and if row idx will advance to 0, stop here
+                    row_end = self.row[0]
+                    col_end = self.col[0]
+                    self.sram1_busy = True
+                    self.rowcol_advance1()
+                    break
+                else:
+                    # go and find whether the next data is true
+                    self.rowcol_advance1()
+
+
+                if self.sram1_complete1:
+                    # completes
+                    self.sram1_busy = True
+                    row_end = self.row[0]
+                    col_end = self.col[0]
+                    break
+            else:
+                break
+
+        if self.sram1_busy:
+            # if we successfully found a removable band of data
+            idx_start = row_raw * self.sram_subsum_cnt + col_raw
+            idx_end = row_end * self.sram_subsum_cnt + col_end
+        else:
+            # if not, we should restore the state
+            self.row[0] = row_raw
+            self.col[0] = col_raw
+            self.rownum1 = rownum1_raw 
+            self.sram1_complete1 = sram1_complete1_raw
+        
+        return (idx_start, idx_end)
 
     def check_a(self, row, col, a_state_matrix, sram1_rownum_cnt):
         a_row = row + (self.rownum1 - 1) * sram1_rownum_cnt
