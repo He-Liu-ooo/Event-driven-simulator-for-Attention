@@ -48,7 +48,7 @@ class SRAM(BaseUnit):
     def dump_state_matrix(self, sram, mode):
         print(str(sram) + ":")
         if sram == "SRAM1":
-            if (mode == "Q") or (mode == "K") or (mode == "V") or (mode == "FC1") or (mode == "FC2"): 
+            if (mode == "Q") or (mode == "K") or (mode == "V") or (mode == "LP") or (mode == "FC1") or (mode == "FC2"): 
                 print(self.sram_state_matrix[:32])
                 print(self.sram_state_matrix[32:64])
                 print(self.sram_state_matrix[64:96])
@@ -82,7 +82,7 @@ class SRAM(BaseUnit):
                 # print(self.sram_state_matrix[120:128])
 
         else:
-            if (mode == "Q") or (mode == "K") or (mode == "V") or (mode == "FC1"): 
+            if (mode == "Q") or (mode == "K") or (mode == "V") or (mode == "FC1") or (mode == "LP"): 
                 print("0")
                 print(self.sram_state_matrix[:64])
                 print("1")
@@ -208,11 +208,24 @@ class SRAM1(SRAM):
         """ In case of data transfer between last core's array to this core's SRAM """
         self.sram_state_matrix[idx] = utils.READY
     
+    def update_to_ready_from_array_av(self, prev_core_blocknum_col_std):
+        """ subX write into this core's SRAM """
+        row_idx = (self.array_block_counter - 1) // prev_core_blocknum_col_std
+        col_idx = (self.array_block_counter - row_idx * prev_core_blocknum_col_std) // 2 - 1
+        self.sram_state_matrix[row_idx * self.subsum_cnt_std + col_idx] = utils.READY
+
+    def update_to_ready_from_array_abrupt(self, prev_core_blocknum_col_std):
+        """ When a row of A'*V completes, we need to update thie core's SRAM with all heads' result """
+        row_idx = self.array_block_counter // prev_core_blocknum_col_std
+
+        for i in range((row_idx - 1) * self.subsum_cnt_std + prev_core_blocknum_col_std // 2 , row_idx * self.subsum_cnt_std):
+            self.sram_state_matrix[i] = utils.READY
+
     def update_to_ready_from_softmax(self, a_row, block_idx_start, block_idx_end):
         for i in range(block_idx_start // 2, (block_idx_end + 1) // 2):
             self.sram_state_matrix[a_row * self.subsum_cnt_std + i] = utils.READY
 
-    def update_to_ready_from_ln(self, row_idx, sram_row_std):
+    def update_to_ready_from_ln(self, row_idx, sram_row_std, start, end):
         """
         sram_row_std: how many mac_lane rows should be assigned to this SRAM 
         """
@@ -222,10 +235,10 @@ class SRAM1(SRAM):
         # print("row idx: " + str(row_idx))
         idx = row_idx % row_num
         # print("sram row idx: " + str(idx))
-        for i in range(self.subsum_cnt_std):
+        for i in range(start // 2, (end + 1) // 2):
             self.sram_state_matrix[idx * self.subsum_cnt_std + i] = utils.READY
 
-        if row_idx == sram_row_std:
+        if row_idx == (sram_row_std - 1):
             self.write_complete = True
 
     def check_remove_state(self, row_idx):

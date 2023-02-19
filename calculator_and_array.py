@@ -104,6 +104,18 @@ class CalculatorAndArray(BaseUnit):
 
             if self.block_counter_cal == self.block_cnt:
                 self.complete = True
+    
+    def is_next_core_sram_full(self, blocknum_row_next_sram1, blocknum_col):
+        """ 
+        When this core is transferring result data to next core's SRAM, check whether next core's SRAM is full 
+        
+        blocknum_row_next_sram1: number of mac_lane rows of data can next core's SRAM hold
+        blocknum_col: number of mac_lane columns of this core's result matrix
+        """
+        if  self.block_counter_rm == blocknum_row_next_sram1 * blocknum_col:
+            return True
+        return False
+
 
     def array_idx_rm_advance(self):
         if self.array_idx_rm + 1 < self.mac_lane:
@@ -112,7 +124,7 @@ class CalculatorAndArray(BaseUnit):
             self.array_idx_rm = 0
             self.block_counter_rm += 1
             
-    def array_idx_rm_advance_fc1(self, array_idx_rm):
+    def array_idx_rm_advance_keep(self, array_idx_rm):
         if array_idx_rm + 1 < self.mac_lane:
             pass
         else:
@@ -126,10 +138,6 @@ class CalculatorAndArray(BaseUnit):
         """
 
         idx = 0
-        # print("array_idx_rm in array_idx_advance(): " + str(self.array_idx_rm))
-        # print("self.array_state_matrix[self.array_idx_rm]: " + str(self.array_state_matrix[self.array_idx_rm]))
-        # print("array state matrix")
-        # print(self.array_state_matrix)
         if self.array_state_matrix[self.array_idx_rm] == utils.COMPLETESUM:
             if mode == "sram":
                 self.array_sram_busy = True

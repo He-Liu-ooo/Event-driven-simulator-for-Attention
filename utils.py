@@ -33,32 +33,20 @@ COMPLETESUM = 3
 
 
 """ 
-States of the data of A in the core for Q*K
+States of the data of A/X in the core for Q*K/LP
 
-NULL: no data(data of A is not calculated yet)
-A: data of A is calculated, can be used for executing softmax
-A_CAL: data of A in GB that is being calculated by softmax unit
-A_SOFTMAX: data undergoes softmax, can be used for A'*V calculation
+NULL: no data(data of A/X is not calculated yet)
+A/X: data of A/X is calculated, can be used for executing softmax/layernorm
+A_CAL/X_CAL: data of A/X in GB that is being calculated by softmax/layernorm unit
+A_SOFTMAX/X_LAYERNORM: data undergoes softmax/layernorm, can be used for A'*V/FC1 calculation
 
-GB: NULL -> A -> REMOVING -> A_CAL -> REMOVING -> A_SOFTMAX
+GB(Softmax): NULL -> A -> REMOVING -> A_CAL -> REMOVING -> A_SOFTMAX
+GB(Layernorm): NULL -> X -> REMOVING -> X_CAL
 Softmax: NULL -> A -> A_SOFTMAX -> NULL
+Layernorm: NULL -> X -> X_LAYERNROM -> REMOVING -> NULL
 """
 # NULL = 0
-A = 1
+A = 1  # X
 # REMOVING = 2
-A_CAL = 3 
-A_SOFTMAX = 4
-
-
-""" 
-State of the data of X in LN
-
-NULL: no data
-X: data of X has transferred to LN, waiting for calculation
-X_CAL: data of X finishes calculation
-REMOVING: data of calculated X is removing for next FC calculation 
-"""
-# NULL = 0
-X = 1
-X_CAL = 3
-# REMOVING = 2
+A_CAL = 3   # X_CAL
+A_SOFTMAX = 4   #X_LAYERNORM

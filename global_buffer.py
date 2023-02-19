@@ -19,6 +19,8 @@ class GlobalBuffer(BaseUnit):
     sram2_busy: if the GB is transferring data from core sram2 now
     array_busy: if the GB is transferring data from core array now
     softmax_busy: if the GB is transferring data to softmax unit now
+    layernorm_busy: if the GB is transferring data to layernorm unit now
+
     row, col: which data in core's sram is the global buffer transfer now
     colnum2: record which mac_lane col of logic sram2 is now transferring
     colnum2_sram: record which mac_lane col of physical sram2 is now transferring 
@@ -27,12 +29,15 @@ class GlobalBuffer(BaseUnit):
     array_idx_rm: which data in core's array is the global buffer transfer now
                difference between array_idx_cal in calculator_and_array, which indicates position id that needs to accept the next data
     a_row: record which row of A is executing softmax
+    layernorm_row: record which row of X is executing layernorm
     softmax_start: record the transfer to/from softmax starts from which block
     softmax_end: record the transfer to/from softmax ends at which block
+    layernorm_start: record the transfer to layernorm starts from which block
+    layernorm_end: record the transfer to layernorm ends at which block
 
     blocknum_row_cnt: number of mac_lane rows need to be replaced
     array_data_cnt: number of mac_lane data need to be replaced
-    fc1_blocknum_counter: record how many blocks ftom fc1 core has been written into GB
+    blocknum_counter_from_last_core: record how many blocks from last core has been written into GB
 
     sram1_complete1: indicates whether data update of SRAM1 is complete(True when the last data starts transferring)
     sram1_complete2: indicates whether data update of SRAM1 is complete(True when the last data finishes transferring)
@@ -44,20 +49,23 @@ class GlobalBuffer(BaseUnit):
     sram2_latency_counter: latency counter for sram2, width equal to chosen bandwidth
     array_latency_counter: latency counter for the data transfer of array
     softmax_latency_counter: latency counter for the data transfer between GB and Softmax
+    layernorm_latency_counter: latency counter for the data transfer between GB and Layernorm
 
     array_data_counter: record how many data has been moved into gb
 
     gb_sram_bandwidth: number of mac_lane*mac_num BYTE of data that can be transferred from GB to core SRAM during one access time               
     softmax_bandwidth: number of mac_lane*mac_lane blocks can be transferred from GB to Softmax Unit at a time
+    layermorm_bandwidth: number of mac_lane*mac_lane blocks can be transferred from GB to Layernorm Unit at a time
     """
 
-    def __init__(self, latency_count, gb_sram_bandwidth, softmax_bandwidth=0):
+    def __init__(self, latency_count, gb_sram_bandwidth, softmax_bandwidth=0, layernorm_bandwidth=0):
         super(GlobalBuffer, self).__init__(latency_count)
 
         self.sram1_busy = False
         self.sram2_busy = False
         self.array_busy = False
         self.softmax_busy = False
+        self.layernorm_busy = False
 
         self.row = [0, 0]
         self.col = [0, 0]
@@ -67,12 +75,15 @@ class GlobalBuffer(BaseUnit):
         self.rownum1 = 1
         self.array_idx_rm = 0
         self.a_row = 0
+        self.layernorm_row = 0
         self.softmax_start = 0
         self.softmax_end = softmax_bandwidth - 1
+        self.layernorm_start = 0
+        self.layernorm_end = layernorm_bandwidth - 1
 
         self.blocknum_row_cnt = 0
         self.array_data_cnt = 0
-        self.fc1_blocknum_counter = 0
+        self.blocknum_counter_from_last_core = 0
         
         self.sram1_complete1 = False
         self.sram1_complete2 = False
@@ -84,11 +95,13 @@ class GlobalBuffer(BaseUnit):
         self.sram2_latency_counter = 0
         self.array_latency_counter = 0
         self.softmax_latency_counter = 0
+        self.layernorm_latency_counter = 0
 
         self.array_data_counter = 0
 
         self.gb_sram_bandwidth = gb_sram_bandwidth
         self.softmax_bandwidth = softmax_bandwidth
+        self.layernorm_bandwidth = layernorm_bandwidth
 
         
     def dump_configs(self):
@@ -117,7 +130,7 @@ class GlobalBuffer(BaseUnit):
         print(" + Next transferring data from sram2: [" + str(self.row[1]) + ", " + str(self.col[1]) + "]")
         print(" + Next transferring data from array: " + str(self.array_idx_rm))
         if idx == "FC2":
-            print(" Received block number from FC1 core: " + str(self.fc1_blocknum_counter))
+            print(" Received block number from FC1 core: " + str(self.blocknum_counter_from_last_core))
         print("---------------------------")
 
     def dump_a_state_matrix(self):
@@ -175,6 +188,18 @@ class GlobalBuffer(BaseUnit):
         if end == (self.a_state_matrix.shape[1] - 1):
             self.a_row += 1
     
+    def update_blocknum_counter_from_last_core(self, block_counter_rm, blocknum_col_std):
+        """ 
+        When transferring block from last core to GB and then will be transferred to next core's SRAM, for LP case,  
+        we need to update the variable blocknum_counter_from_last_core
+        """
+        if (block_counter_rm % blocknum_col_std) == 0:
+            # a whole row finishes calculation
+            self.blocknum_counter_from_last_core = (block_counter_rm // blocknum_col_std) * self.sram_subsum_cnt
+        else:
+            self.blocknum_counter_from_last_core = (block_counter_rm // blocknum_col_std) * self.sram_subsum_cnt + block_counter_rm - \
+                                                        (block_counter_rm // blocknum_col_std) * blocknum_col_std
+
     def rowcol_advance1(self):
         """ For SRAM1 """
         if (self.col[0] + 1) < self.sram_subsum_cnt:
@@ -465,7 +490,7 @@ class GlobalBuffer(BaseUnit):
         return (idx_start, idx_end)
 
     def check_fc1(self, row, col, mac_lane):
-        if (((self.sram2_colnum_cnt * 4) // mac_lane) * self.sram1_rownum_cnt * (self.rownum1 - 1) + (row * self.sram_subsum_cnt + col) * 2) <= self.fc1_blocknum_counter:
+        if (((self.sram2_colnum_cnt * 4) // mac_lane) * self.sram1_rownum_cnt * (self.rownum1 - 1) + (row * self.sram_subsum_cnt + col) * 2) <= self.blocknum_counter_from_last_core:
             return True
         return False
     
@@ -594,6 +619,33 @@ class GlobalBuffer(BaseUnit):
 
         return (start, end)
 
+    def find_layernorm_null_target(self):
+        """ Find the target data in GB that will be transferred to Layernorm """
+
+        start = 0
+        end = 0
+        if self.layernorm_row < self.blocknum_row_cnt:
+            if self.layernorm_end < (self.a_state_matrix.shape[1] - 1):
+                if (self.a_state_matrix[self.layernorm_row][self.layernorm_end] == utils.A):
+                    for i in range(self.layernorm_start, self.layernorm_end + 1):
+                        self.a_state_matrix[self.layernorm_row][i] = utils.REMOVING
+                    start = self.layernorm_start
+                    end = self.layernorm_end
+                    self.layernorm_start = self.layernorm_end + 1
+                    self.layernorm_end = self.layernorm_start + self.layernorm_bandwidth - 1
+                    self.layernorm_busy = True
+            else:
+                if (self.a_state_matrix[self.layernorm_row][-1] == utils.A):
+                    for i in range(self.layernorm_start, self.a_state_matrix.shape[1]):
+                        self.a_state_matrix[self.layernorm_row][i] = utils.REMOVING
+                    start = self.layernorm_start
+                    end = self.a_state_matrix.shape[1] - 1
+                    self.layernorm_start = 0
+                    self.layernorm_end = self.layernorm_bandwidth - 1
+                    self.layernorm_busy = True
+
+        return (start, end)
+
     def find_softmax_res_target(self):
         """ Find softmax result target and transfer it back to GB """
         start = 0
@@ -616,7 +668,7 @@ class GlobalBuffer(BaseUnit):
         self.softmax_busy = True
 
         return (start, end)
-
+    
     def softmax_complete(self):
         return (self.a_state_matrix[-1][-1] == utils.A_SOFTMAX)
 
