@@ -124,8 +124,6 @@ class GlobalBuffer(BaseUnit):
     def dump_rm_status(self, idx):
         print("---------------------------")
         print(" Global buffer " + str(idx) + " status:")
-        # print(" + is busy for sram1: " + str(self.sram1_busy))
-        # print(" + is busy for array: " + str(self.array_busy))
         print(" + Next transferring data from sram1: [" + str(self.row[0]) + ", " + str(self.col[0]) + "]")
         print(" + Next transferring data from sram2: [" + str(self.row[1]) + ", " + str(self.col[1]) + "]")
         print(" + Next transferring data from array: " + str(self.array_idx_rm))
@@ -168,19 +166,17 @@ class GlobalBuffer(BaseUnit):
             self.a_state_matrix = np.zeros((self.blocknum_row_cnt, int(self.array_data_cnt // self.blocknum_row_cnt)), dtype=int)
             print("A state matrix size: [" + str(self.a_state_matrix.shape[0]) + ", " + str(self.a_state_matrix.shape[1]) + "]")
 
-
-    def update_to_a1(self, block_counter):
-        if block_counter > 0:
-            row = int((block_counter - 1) // self.a_state_matrix.shape[1])
-            col = block_counter - 1 - row * self.a_state_matrix.shape[1]
-            self.a_state_matrix[row][col] = utils.A
-    
     def update_to_a2(self, row, col):
         self.a_state_matrix[row][col] = utils.A
 
-    def update_to_cal(self, start, end):
+    def update_to_cal(self, start, end, mode):
+        row_idx = self.layernorm_row if mode == "ln" else self.a_row
+
         for i in range(start, end + 1):
-            self.a_state_matrix[self.a_row][i] = utils.A_CAL
+            self.a_state_matrix[row_idx][i] = utils.A_CAL
+
+        if (mode == "ln") and (end == (self.a_state_matrix.shape[1] - 1)):
+            self.layernorm_row += 1
 
     def update_to_asoftmax(self, start, end):
         for i in range(start, end + 1):
@@ -193,11 +189,12 @@ class GlobalBuffer(BaseUnit):
         When transferring block from last core to GB and then will be transferred to next core's SRAM, for LP case,  
         we need to update the variable blocknum_counter_from_last_core
         """
+
         if (block_counter_rm % blocknum_col_std) == 0:
             # a whole row finishes calculation
-            self.blocknum_counter_from_last_core = (block_counter_rm // blocknum_col_std) * self.sram_subsum_cnt
+            self.blocknum_counter_from_last_core = (block_counter_rm // blocknum_col_std) * self.sram_subsum_cnt * 2
         else:
-            self.blocknum_counter_from_last_core = (block_counter_rm // blocknum_col_std) * self.sram_subsum_cnt + block_counter_rm - \
+            self.blocknum_counter_from_last_core = (block_counter_rm // blocknum_col_std) * self.sram_subsum_cnt * 2 + block_counter_rm - \
                                                         (block_counter_rm // blocknum_col_std) * blocknum_col_std
 
     def rowcol_advance1(self):
@@ -253,7 +250,7 @@ class GlobalBuffer(BaseUnit):
                 self.row[1] = 0
             # a "real row" completes, but whole not
             # this means a new row's calculation begins
-            elif (self.rownum2) + 1 < self.blocknum_row_cnt:
+            elif (self.rownum2 + 1) < self.blocknum_row_cnt:
                 self.col[1] = 0
                 self.colnum2_sram = 1
                 self.colnum2 = 1
@@ -376,7 +373,6 @@ class GlobalBuffer(BaseUnit):
                         # last data still satisfies, which means we successfully find a removable band of data
                         self.sram2_busy = True
                         row_end = self.row[1]
-                        # col_end = self.col[1]
                         colnum2_sram_end = self.colnum2 if flag else self.colnum2_sram
                         self.rowcol_advance2(mac_lane, flag)
                     elif (flag == False) and ((self.col[1] + 1 - self.colnum2_sram * mac_lane) >= 0) and ((self.row[1] + 1) >= self.sram_subsum_cnt) and \
@@ -384,7 +380,6 @@ class GlobalBuffer(BaseUnit):
                         # if a brand new SRAM2 is going to be updated
                         self.sram2_busy = True
                         row_end = self.row[1]
-                        # col_end = self.col[1]
                         colnum2_sram_end = self.colnum2 if flag else self.colnum2_sram
                         self.rowcol_advance2(mac_lane, flag)
                         break
@@ -411,17 +406,18 @@ class GlobalBuffer(BaseUnit):
                 self.rownum2 = rownum2_raw
                 self.sram2_complete1 = sram2_complete1_raw
             else:
-                # print("in SRAM2, start:[" + str(row_raw) + ", " + str(col_raw) + "], end:[" + str(row_end) + ", " + str(col_end) + "]")
-                colnum2_tmp = str(colnum2_raw) if flag else str(colnum2_sram_raw)
-                # print("colnum2: [" + colnum2_tmp + ", " + str(colnum2_sram_end) + "]")
+               pass
 
             return (row_raw, row_end, colnum2_raw if flag else colnum2_sram_raw, colnum2_sram_end)
         else:
             assert(0)
 
-    
-    def find_sram1_target_with_fc1_check(self, sram_state_matrix, mac_lane):
-        """ Check if the data of FC1 result matrix that is going to update FC2's core SRAM1 is ready """
+    def find_sram1_target_with_gb_check(self, sram_state_matrix, mac_lane, mode):
+        """ 
+        Check if the data of FC1 result matrix that is going to update FC2's core SRAM1 is ready 
+
+        mode: if this checks for LP or FC2
+        """
 
         # the returning flattened idx
         idx_start = 0
@@ -445,7 +441,7 @@ class GlobalBuffer(BaseUnit):
         # find the band of data
         for i in range(self.gb_sram_bandwidth):
             if (sram_state_matrix[self.row[0] * self.sram_subsum_cnt + self.col[0]] == utils.REMOVE) and \
-                self.check_fc1(self.row[0], self.col[0], mac_lane):
+                self.check_gb(self.row[0], self.col[0], mac_lane, mode):
                 # hit = True
                 if i == (self.gb_sram_bandwidth - 1):
                     # last data still satisfies, which means we successfully find a removable band of data
@@ -489,9 +485,15 @@ class GlobalBuffer(BaseUnit):
         
         return (idx_start, idx_end)
 
-    def check_fc1(self, row, col, mac_lane):
-        if (((self.sram2_colnum_cnt * 4) // mac_lane) * self.sram1_rownum_cnt * (self.rownum1 - 1) + (row * self.sram_subsum_cnt + col) * 2) <= self.blocknum_counter_from_last_core:
-            return True
+    def check_gb(self, row, col, mac_lane, mode):
+        if mode == "fc2":
+            if (((self.sram2_colnum_cnt * 4) // mac_lane) * self.sram1_rownum_cnt * (self.rownum1 - 1) + (row * self.sram_subsum_cnt + col) * 2) <= self.blocknum_counter_from_last_core:
+                return True
+        elif mode == "lp":
+            if ((self.sram2_colnum_cnt // mac_lane) * self.sram1_rownum_cnt * (self.rownum1 - 1) + (row * self.sram_subsum_cnt + col) * 2) <= self.blocknum_counter_from_last_core:
+                return True
+        else:
+            assert(0)
         return False
     
     def find_sram_target_a(self, sram_state_matrix, a_state_matrix, sram1_rownum_cnt):
@@ -573,11 +575,16 @@ class GlobalBuffer(BaseUnit):
             return True
         return False
                 
-    def fc1_result_matrix_write_complete(self, sram1_idx, mac_lane):
-        """ Check whether all FC1 result matrix is written into FC2's core SRAM1 """ 
-        
-        if (((self.sram2_colnum_cnt * 4) // mac_lane) * self.sram1_rownum_cnt * (self.rownum1 - 1) + sram1_idx * 2) == self.blocknum_row_cnt * (self.sram2_colnum_cnt * 4 // mac_lane):
-            return True
+    def prev_core_result_matrix_write_complete(self, sram1_idx, mac_lane, mode):
+        """ Check whether all A'*V/FC1 result matrix is written into LP/FC2's core SRAM1 """ 
+        if mode == "fc2":
+            if (((self.sram2_colnum_cnt * 4) // mac_lane) * self.sram1_rownum_cnt * (self.rownum1 - 1) + sram1_idx * 2) == self.blocknum_row_cnt * (self.sram2_colnum_cnt * 4 // mac_lane):
+                return True
+        elif mode == "lp":
+            if ((self.sram2_colnum_cnt // mac_lane) * self.sram1_rownum_cnt * (self.rownum1 - 1) + sram1_idx * 2) == self.blocknum_row_cnt * (self.sram2_colnum_cnt // mac_lane):
+                return True
+        else:
+            assert(0)
         
         return False
 

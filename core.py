@@ -75,8 +75,6 @@ class Core:
 
     def sram_ready(self):
         """ Check whether SRAMs are ready to calculate """
-        # print("sram1 ready: " + str(self.sram1.ready()))
-        # print("sram2 ready: " + str(self.sram2.ready()))
         return (self.sram1.ready() & self.sram2.ready(self.blocknum_cal[1]))
     
     def sram_cal_advance(self):

@@ -112,7 +112,7 @@ class CalculatorAndArray(BaseUnit):
         blocknum_row_next_sram1: number of mac_lane rows of data can next core's SRAM hold
         blocknum_col: number of mac_lane columns of this core's result matrix
         """
-        if  self.block_counter_rm == blocknum_row_next_sram1 * blocknum_col:
+        if  self.block_counter_rm >= blocknum_row_next_sram1 * blocknum_col:
             return True
         return False
 
